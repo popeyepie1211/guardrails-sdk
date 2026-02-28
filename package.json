@@ -2,7 +2,7 @@
   "name": "guardrails-sdk",
   "version": "1.0.0",
   "description": "",
-  "type":"module",
+  "type": "module",
   "main": "src/index.js",
   "scripts": {
     "test": "node test/mock-model.js"
@@ -11,6 +11,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "axios": "^1.4.0"
+    "axios": "^1.13.6",
+    "dotenv": "^17.3.1",
+    "nanoid": "^5.1.6"
   }
 }
