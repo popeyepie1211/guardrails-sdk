@@ -1,17 +1,45 @@
 {
   "name": "guardrails-sdk",
   "version": "1.0.0",
-  "description": "",
+  "description": "A lightweight SDK that wraps AI/ML model predictions to capture telemetry (input, output, latency) and sends batched vitals to a backend for monitoring and auditing.",
   "type": "module",
   "main": "src/index.js",
-  "scripts": {
-    "test": "node test/mock-model.js"
+  "exports": {
+    ".": "./src/index.js"
   },
-  "keywords": [],
+  "files": [
+    "src/"
+  ],
+  "scripts": {
+    "test": "node test/mock-model.js",
+    "test:server": "node test/mock-server.js"
+  },
+  "keywords": [
+    "guardrails",
+    "ai",
+    "ml",
+    "model-monitoring",
+    "telemetry",
+    "observability",
+    "sdk"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/popeyepie1211/guardrails-sdk.git"
+  },
+  "homepage": "https://github.com/popeyepie1211/guardrails-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/popeyepie1211/guardrails-sdk/issues"
+  },
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
-    "axios": "^1.13.6",
+    "axios": "^1.13.6"
+  },
+  "devDependencies": {
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "ioredis": "^5.10.0",
