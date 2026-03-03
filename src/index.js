@@ -2,6 +2,7 @@
 import { deepClone, getTimestamp } from './utils/helpers.js';
 import { DataBuffer } from './buffer.js';
 import { Transport } from './transport.js'; 
+import axios from 'axios';
 
 class Guardrail {
   constructor() {
