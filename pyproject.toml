@@ -1,0 +1,9 @@
+[project]
+name = "guardrail_ai"
+version = "0.1.0"
+description = "Guardrail AI Monitoring Engine"
+authors = [{name="Qudsiya Siddique"}]
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
