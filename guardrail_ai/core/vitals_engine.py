@@ -16,7 +16,7 @@ import pandas as pd
 from guardrail_ai.core.validator import Validator
 from guardrail_ai.core.threshold import ThresholdEvaluator
 from guardrail_ai.core.exceptions import GuardrailException
-from guardrail_ai.metrics.fairness import StatisticalParity
+from guardrail_ai.metrics.fairness import StatisticalParity,GiniCoefficient
 
 
 class VitalsEngine:
@@ -44,6 +44,7 @@ class VitalsEngine:
 
         # Validate metadata first
         self._validate_metadata()
+        self.prediction_type = self.metadata["prediction_type"]
 
         # Determine if fairness is enabled
         self.fairness_enabled = (
@@ -75,6 +76,13 @@ class VitalsEngine:
 
         if not isinstance(self.metadata["prediction_column"], str):
             raise GuardrailException("'prediction_column' must be a string.")
+        # prediction type validation
+        valid_types = ["probability", "binary", "multiclass"]
+
+        if self.metadata["prediction_type"] not in valid_types:
+            raise GuardrailException(
+            f"prediction_type must be one of {valid_types} and Warning: Binary predictions reduce metric sensitivity.Please provide probabilities not raw labels."
+        )
 
         # Protected attributes are optional
         protected = self.metadata.get("protected_attributes")
@@ -164,11 +172,14 @@ class VitalsEngine:
             prediction_column=self.metadata["prediction_column"],
             protected_attributes=self.metadata["protected_attributes"],
         )
+            # Gini coefficient for all prediction types (probability, binary, multiclass)
+        preds = df[self.metadata["prediction_column"]].values
 
-    # Other metrics still stubbed
+        metrics["gini"] = GiniCoefficient.compute(preds)
+    # Remaining metrics (stub)
         for metric in summary:
-            if metric == "statistical_parity":
-                continue
-            metrics[metric] = summary[metric]["mean"]
+            if metric in ["statistical_parity", "gini"]:
+               continue
+        metrics[metric] = summary[metric]["mean"]
 
         return metrics
