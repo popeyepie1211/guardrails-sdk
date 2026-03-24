@@ -1,4 +1,7 @@
 Papers-ppt
 guardrail_ai
+node_modules
+src
+test
 tests
 venv

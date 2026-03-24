@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 guardrail_ai/__init__.py
 guardrail_ai.egg-info/PKG-INFO
@@ -6,7 +7,16 @@ guardrail_ai.egg-info/dependency_links.txt
 guardrail_ai.egg-info/top_level.txt
 guardrail_ai/core/__init__.py
 guardrail_ai/core/exceptions.py
+guardrail_ai/core/threshold.py
+guardrail_ai/core/validator.py
+guardrail_ai/core/vitals_engine.py
+guardrail_ai/metrics/__init__.py
+guardrail_ai/metrics/fairness.py
 tests/test_exceptions.py
+tests/test_fairness.py
+tests/test_threshold.py
+tests/test_validator.py
+tests/test_vital_engine.py
 venv/Lib/site-packages/py.py
 venv/Lib/site-packages/six.py
 venv/Lib/site-packages/_pytest/__init__.py
@@ -2361,12 +2371,9 @@ venv/Lib/site-packages/pip/_internal/operations/build/__init__.py
 venv/Lib/site-packages/pip/_internal/operations/build/build_tracker.py
 venv/Lib/site-packages/pip/_internal/operations/build/metadata.py
 venv/Lib/site-packages/pip/_internal/operations/build/metadata_editable.py
-venv/Lib/site-packages/pip/_internal/operations/build/metadata_legacy.py
 venv/Lib/site-packages/pip/_internal/operations/build/wheel.py
 venv/Lib/site-packages/pip/_internal/operations/build/wheel_editable.py
-venv/Lib/site-packages/pip/_internal/operations/build/wheel_legacy.py
 venv/Lib/site-packages/pip/_internal/operations/install/__init__.py
-venv/Lib/site-packages/pip/_internal/operations/install/editable_legacy.py
 venv/Lib/site-packages/pip/_internal/operations/install/wheel.py
 venv/Lib/site-packages/pip/_internal/req/__init__.py
 venv/Lib/site-packages/pip/_internal/req/constructors.py
@@ -2407,7 +2414,6 @@ venv/Lib/site-packages/pip/_internal/utils/logging.py
 venv/Lib/site-packages/pip/_internal/utils/misc.py
 venv/Lib/site-packages/pip/_internal/utils/packaging.py
 venv/Lib/site-packages/pip/_internal/utils/retry.py
-venv/Lib/site-packages/pip/_internal/utils/setuptools_build.py
 venv/Lib/site-packages/pip/_internal/utils/subprocess.py
 venv/Lib/site-packages/pip/_internal/utils/temp_dir.py
 venv/Lib/site-packages/pip/_internal/utils/unpacking.py
