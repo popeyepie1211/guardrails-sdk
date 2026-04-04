@@ -17,9 +17,11 @@ def baseline_with_fairness():
         "baseline_summary": {
             "gini": {"mean": 0.3, "std": 0.02},
             "psi": {"mean": 0.05, "std": 0.01},
-            "l_inf": {"mean": 0.2, "std": 0.01},
+            "linf": {"mean": 0.2, "std": 0.01},
+            "ood_score": {"mean": 0.05, "std": 0.01},
             "privacy_score": {"mean": 0.9, "std": 0.02},
             "statistical_parity": {"mean": 0.1, "std": 0.01},
+            "shap_importance": {"mean": 0.5, "std": 0.01},
         }
     }
 
@@ -29,8 +31,10 @@ def baseline_without_fairness():
         "baseline_summary": {
             "gini": {"mean": 0.3, "std": 0.02},
             "psi": {"mean": 0.05, "std": 0.01},
-            "l_inf": {"mean": 0.2, "std": 0.01},
+            "linf": {"mean": 0.2, "std": 0.01},
+            "ood_score": {"mean": 0.05, "std": 0.01},
             "privacy_score": {"mean": 0.9, "std": 0.02},
+            "shap_importance": {"mean": 0.5, "std": 0.01},
         }
     }
 
@@ -92,6 +96,9 @@ def test_valid_batch_no_fairness():
         feature_columns=["feature1", "feature2"],
         prediction_column="prediction",
         protected_attributes=None,
+        quasi_identifier_columns=["feature1"],
+        numerical_features=["feature1", "feature2"],
+        categorical_features=["gender"]
     )
 
 
@@ -104,6 +111,9 @@ def test_missing_required_column():
             feature_columns=["feature1", "feature2"],
             prediction_column="prediction",
             protected_attributes=None,
+            quasi_identifier_columns=["feature1"],
+            numerical_features=["feature1", "feature2"],
+            categorical_features=["gender"]
         )
 
 
@@ -117,6 +127,9 @@ def test_prediction_contains_null():
             feature_columns=["feature1", "feature2"],
             prediction_column="prediction",
             protected_attributes=None,
+            quasi_identifier_columns=["feature1"],
+            numerical_features=["feature1", "feature2"],
+            categorical_features=["gender"]
         )
 
 
@@ -135,6 +148,9 @@ def test_valid_categorical_protected_attribute():
             "type": "categorical",
             "columns": ["gender"],
         },
+        quasi_identifier_columns=["feature1"],
+        numerical_features=["feature1", "feature2"],
+        categorical_features=["gender"]
     )
 
 
@@ -151,6 +167,9 @@ def test_categorical_less_than_two_groups():
                 "type": "categorical",
                 "columns": ["gender"],
             },
+            quasi_identifier_columns=["feature1"],
+            numerical_features=["feature1", "feature2"],
+            categorical_features=["gender"]
         )
 
 
@@ -169,6 +188,9 @@ def test_valid_one_hot_protected_attribute():
             "type": "one_hot",
             "columns": ["gender_m", "gender_f"],
         },
+        quasi_identifier_columns=["feature1"],
+        numerical_features=["feature1", "feature2"],
+        categorical_features=["gender"]
     )
 
 
@@ -185,6 +207,9 @@ def test_invalid_one_hot_values():
                 "type": "one_hot",
                 "columns": ["gender_m", "gender_f"],
             },
+            quasi_identifier_columns=["feature1"],
+            numerical_features=["feature1", "feature2"],
+            categorical_features=["gender"]
         )
 
 
@@ -200,4 +225,7 @@ def test_invalid_protected_type():
                 "type": "numeric",
                 "columns": ["gender"],
             },
+            quasi_identifier_columns=["feature1"],
+            numerical_features=["feature1", "feature2"],
+            categorical_features=["gender"]
         )

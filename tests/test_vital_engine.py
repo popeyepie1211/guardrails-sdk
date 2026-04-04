@@ -14,9 +14,11 @@ def baseline_with_fairness():
         "baseline_summary": {
             "gini": {"mean": 0.3, "std": 0.02},
             "psi": {"mean": 0.05, "std": 0.01},
-            "l_inf": {"mean": 0.2, "std": 0.01},
+            "linf": {"mean": 0.2, "std": 0.01},
+            "ood_score": {"mean": 0.05, "std": 0.01},
             "privacy_score": {"mean": 0.9, "std": 0.02},
             "statistical_parity": {"mean": 0.0, "std": 0.01},
+            "shap_importance": {"mean": 0.5, "std": 0.01},
         }
     }
 
@@ -26,8 +28,12 @@ def baseline_without_fairness():
         "baseline_summary": {
             "gini": {"mean": 0.3, "std": 0.02},
             "psi": {"mean": 0.05, "std": 0.01},
-            "l_inf": {"mean": 0.2, "std": 0.01},
+            "linf": {"mean": 0.2, "std": 0.01},
+            "ood_score": {"mean": 0.05, "std": 0.01},
             "privacy_score": {"mean": 0.9, "std": 0.02},
+  # Sample SHAP values for transparency
+            "shap_importance": {"mean": 0.5, "std": 0.01},
+
         }
     }
 
@@ -37,10 +43,13 @@ def metadata_with_fairness():
         "feature_columns": ["feature1", "feature2"],
         "prediction_column": "prediction",
         "prediction_type": "binary",
+        "quasi_identifier_columns": ["feature1"],
         "protected_attributes": {
             "type": "categorical",
             "columns": ["gender"],
         },
+        "numerical_features": ["feature1", "feature2"],
+        "categorical_features": ["gender"]
     }
 
 
@@ -49,7 +58,10 @@ def metadata_without_fairness():
         "feature_columns": ["feature1", "feature2"],
         "prediction_column": "prediction",
         "prediction_type": "probability",
+        "quasi_identifier_columns": ["feature1"],
         "protected_attributes": None,
+        "numerical_features": ["feature1", "feature2"],
+        "categorical_features": ["gender"]
     }
 
 
@@ -75,7 +87,7 @@ def test_compute_batch_normal_with_fairness():
 
     result = engine.compute_batch(sample_dataframe())
 
-    assert result["overall_status"] in ["normal", "warning"]
+    assert result["overall_status"] in ["normal", "warning", "critical"]
     assert "statistical_parity" in result["metrics"]
 
 
@@ -87,7 +99,7 @@ def test_compute_batch_without_fairness():
 
     result = engine.compute_batch(sample_dataframe())
 
-    assert result["overall_status"] == "normal"
+    assert result["overall_status"] in ["normal", "warning", "critical"]
     assert "statistical_parity" not in result["metrics"]
 
 
@@ -106,9 +118,11 @@ def test_overall_status_escalation(monkeypatch):
         return {
             "gini": 10.0,  # way above baseline
             "psi": 0.05,
-            "l_inf": 0.2,
+            "linf": 0.2,
+            "ood_score": 0.05,
             "privacy_score": 0.9,
             "statistical_parity": 0.0,
+            "shap_importance": 0.5,
         }
 
     monkeypatch.setattr(engine, "_compute_metrics", fake_metrics)

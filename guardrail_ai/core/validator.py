@@ -48,8 +48,10 @@ class Validator:
         required_metrics = [
             "gini",
             "psi",
-            "l_inf",
+            "linf",
+            "ood_score",
             "privacy_score",
+            "shap_importance",
         ]
 
         # Add fairness only if enabled
@@ -101,11 +103,45 @@ class Validator:
         feature_columns: List[str],
         prediction_column: str,
         protected_attributes: Optional[Dict[str, Any]],
+        quasi_identifier_columns: List[str],
+        numerical_features: List[str],
+        categorical_features: List[str],
     ) -> None:
         """
         Validate incoming telemetry batch.
         Protected attributes are optional.
         """
+        # -----------------------------
+# Numerical Feature Validation
+# -----------------------------
+        for col in numerical_features:
+            if col not in df.columns:
+               raise InputValidationError(
+            f"Numerical feature '{col}' missing in data."
+        )
+
+            if not pd.api.types.is_numeric_dtype(df[col]):
+               raise InputValidationError(
+            f"Numerical feature '{col}' must be numeric."
+        )
+        # -----------------------------
+# Categorical Feature Validation
+# -----------------------------
+        for col in categorical_features:
+            if col not in df.columns:
+               raise InputValidationError(
+            f"Categorical feature '{col}' missing in data."
+        )
+        for col in quasi_identifier_columns:
+            if col not in df.columns:
+               raise InputValidationError(
+            f"Quasi identifier column '{col}' missing in data."
+        )
+
+        if df[col].isnull().all():
+           raise InputValidationError(
+            f"Quasi identifier column '{col}' contains only null values."
+        )
 
         if not isinstance(df, pd.DataFrame):
             raise InputValidationError("Input must be a pandas DataFrame.")
