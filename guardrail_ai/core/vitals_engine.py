@@ -34,7 +34,7 @@ class VitalsEngine:
         "gini": "upper",
         "psi": "upper",
         "linf": "lower",
-        "ood_score": "lower",
+        "ood_score": "upper",
         "privacy_score": "upper",
         "shap_importance": "upper",
     }
@@ -52,6 +52,9 @@ class VitalsEngine:
         # Validate metadata first
         self._validate_metadata()
         self.prediction_type = self.metadata["prediction_type"]
+        self.domain = self.metadata["domain"]
+        self.numerical_features = self.metadata["numerical_features"]
+        self.categorical_features = self.metadata["categorical_features"]
 
         # Determine if fairness is enabled
         self.fairness_enabled = self.metadata.get("protected_attributes") is not None
@@ -66,6 +69,8 @@ class VitalsEngine:
     # Metadata Validation
     # -----------------------------
     def _validate_metadata(self) -> None:
+        if "domain" not in self.metadata:
+            raise GuardrailException("Missing 'domain' in metadata")
 
         if not isinstance(self.metadata, dict):
             raise GuardrailException("Metadata must be a dictionary.")
@@ -131,36 +136,44 @@ class VitalsEngine:
     # Public API
     # -----------------------------
     def compute_batch(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Compute all vitals for a batch and evaluate against thresholds.
-        """
 
-        # Validate batch using updated validator
+    # -----------------------------
+    # Validate batch
+    # -----------------------------
         Validator.validate_batch(
-            df=df,
-            feature_columns=self.metadata["feature_columns"],
-            prediction_column=self.metadata["prediction_column"],
-            protected_attributes=self.metadata.get("protected_attributes"),
-            quasi_identifier_columns=self.metadata["quasi_identifier_columns"],
-            numerical_features=self.metadata["numerical_features"],
-            categorical_features=self.metadata["categorical_features"],
+        df=df,
+        feature_columns=self.metadata["feature_columns"],
+        prediction_column=self.metadata["prediction_column"],
+        protected_attributes=self.metadata.get("protected_attributes"),
+        quasi_identifier_columns=self.metadata["quasi_identifier_columns"],
+        numerical_features=self.metadata["numerical_features"],
+        categorical_features=self.metadata["categorical_features"],
+        domain=self.domain,
         )
 
-        # -----------------------------
-        # Compute Metrics (Stub)
-        # -----------------------------
+    # -----------------------------
+    # Compute Metrics
+    # -----------------------------
         metrics = self._compute_metrics(df)
 
-        # -----------------------------
-        # Apply Thresholds
-        # -----------------------------
+    # -----------------------------
+    # Apply Thresholds
+    # -----------------------------
         evaluated = {}
         overall_status = "normal"
 
         for metric_name, value in metrics.items():
 
-            # Skip fairness if disabled
+        # Skip fairness if disabled
             if metric_name == "statistical_parity" and not self.fairness_enabled:
+               continue
+
+        # SAFE baseline access
+            if metric_name not in self.baseline["baseline_summary"]:
+                evaluated[metric_name] = {
+                "value": value,
+                "status": "no_baseline"
+            }
                 continue
 
             baseline_metric = self.baseline["baseline_summary"][metric_name]
@@ -170,24 +183,25 @@ class VitalsEngine:
             direction = self.METRIC_DIRECTIONS.get(metric_name, "upper")
 
             result = ThresholdEvaluator.evaluate(
-                metric_name=metric_name,
-                value=value,
-                mean=mean,
-                std=std,
-                direction=direction,
-            )
+            metric_name=metric_name,
+            value=value,
+            mean=mean,
+            std=std,
+            direction=direction,
+            domain=self.domain,
+        )
 
             evaluated[metric_name] = result
 
             if result["status"] == "critical":
-                overall_status = "critical"
+               overall_status = "critical"
             elif result["status"] == "warning" and overall_status != "critical":
-                overall_status = "warning"
+               overall_status = "warning"
 
         return {
-            "metrics": evaluated,
-            "overall_status": overall_status,
-        }
+        "metrics": evaluated,
+        "overall_status": overall_status,
+    }
 
     def _compute_metrics(self, df: pd.DataFrame) -> Dict[str, float]:
 

@@ -49,7 +49,8 @@ def metadata_with_fairness():
             "columns": ["gender"],
         },
         "numerical_features": ["feature1", "feature2"],
-        "categorical_features": ["gender"]
+        "categorical_features": ["gender"],
+        "domain": "standard"
     }
 
 
@@ -61,7 +62,9 @@ def metadata_without_fairness():
         "quasi_identifier_columns": ["feature1"],
         "protected_attributes": None,
         "numerical_features": ["feature1", "feature2"],
-        "categorical_features": ["gender"]
+        "categorical_features": ["gender"],
+        "domain": "standard"
+
     }
 
 
