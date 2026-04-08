@@ -1,4 +1,5 @@
-from typing import Dict, List, Optional
+from typing import Dict, List
+
 
 
 class Node:
@@ -19,15 +20,18 @@ class Node:
         self.upstream: List["Node"] = []
         self.downstream: List["Node"] = []
 
-        # history for persistence (used later)
+        # history for persistence (used later if needed)
         self.status_history: List[str] = []
 
     # -----------------------------
     # Dependency Management
     # -----------------------------
     def add_downstream(self, node: "Node") -> None:
-        self.downstream.append(node)
-        node.upstream.append(self)
+        # Prevent duplicate edges
+        if node not in self.downstream:
+            self.downstream.append(node)
+        if self not in node.upstream:
+            node.upstream.append(self)
 
     # -----------------------------
     # Metrics Update
@@ -39,12 +43,18 @@ class Node:
     # Status Update
     # -----------------------------
     def update_status(self, new_status: str) -> None:
+
         if new_status not in self.VALID_STATUSES:
             raise ValueError(f"Invalid status: {new_status}")
 
+    # Hysteresis: avoid immediate flip from critical → green
+        if self.status == "critical" and new_status == "green":
+           if len(self.status_history) < 1 or self.status_history[-1] != "green":
+               self.status_history.append("green")
+               return  # wait for confirmation
+
         self.status = new_status
         self.status_history.append(new_status)
-
     # -----------------------------
     # Failure Handling
     # -----------------------------
