@@ -3,7 +3,14 @@ import os
 import pandas as pd
 import psycopg2
 from datetime import datetime
+
+# Core Engine Imports
 from guardrail_ai.core.vitals_engine import VitalsEngine
+
+# WDAG Execution Imports
+from guardrail_ai.wdag.node import Node
+from guardrail_ai.wdag.graph import WDAG
+from guardrail_ai.wdag.executor import WDAGExecutor
 
 # 1. Mock input data
 data = {
@@ -27,15 +34,14 @@ baseline_config = {
     }
 }
 
-# 3. Initialize engine
-# --- UPDATED METADATA BLOCK ---
+# 3. Initialize engine & metadata
 engine = VitalsEngine(
     baseline=baseline_config,
     metadata={
         "domain": "finance",
         "feature_columns": ["income", "credit_score"],
-        "numerical_features": ["income", "credit_score"], # <--- Add this line
-        "categorical_features": ["gender"],               # <--- Add this line
+        "numerical_features": ["income", "credit_score"],
+        "categorical_features": ["gender"],
         "protected_attributes": {
             "type": "categorical",
             "columns": ["gender"]
@@ -46,33 +52,31 @@ engine = VitalsEngine(
     }
 )
 
-# 4. Execute
-results = engine.compute_batch(df)
-print("PSI:", results["metrics"]["psi"]["value"])
-print("Parity:", results["metrics"]["statistical_parity"]["value"])
+# 4. Initialize WDAG Graph
+graph = WDAG()
+data_node = Node("Data_Stream", "Data Engineer")
+intercept_node = Node("SDK_Intercept", "Middleware")
+vitals_node = Node("Vitals_Engine", "Analysis")
 
-# 5. Export (UNCHANGED LOGIC)
-dashboard_export = {
-    "fairness": round(
-        results["metrics"].get("statistical_parity", {}).get("value", 0.85) * 100, 1
-    ),
-    "stability": round(
-        (1 - results["metrics"].get("psi", {}).get("value", 0.08)) * 100, 1
-    ),
-    "security": 68.0 if results["overall_status"] != "normal" else 95.0,
-    "status": results["overall_status"],
-    "latency": 410
-}
+graph.add_node(data_node)
+graph.add_node(intercept_node)
+graph.add_node(vitals_node)
 
-os.makedirs("public", exist_ok=True)
+# Connect edges with blast radius weights
+graph.add_edge("Data_Stream", "SDK_Intercept", weight=1.0)
+graph.add_edge("SDK_Intercept", "Vitals_Engine", weight=1.0)
 
-with open("public/dashboard_data.json", "w") as f:
-    json.dump(dashboard_export, f, indent=2)
+# 5. Execute Graph
+executor = WDAGExecutor(graph, engine)
+results = executor.run("Data_Stream", df)
 
-print("Metrics calculated and saved to public/dashboard_data.json")
-print(results)
+print("===== WDAG RESULT =====")
+print(f"Overall Status: {results['status']}")
 
-# --- STEP 3: SAVE TO TIMESCALEDB ---
+# Extract the graph trace to JSON for the database
+wdag_trace_json = json.dumps(graph.to_dict())
+
+# 6. Save to TimescaleDB
 try:
     connection = psycopg2.connect(
         user="postgres",
@@ -85,14 +89,14 @@ try:
 
     postgres_insert_query = """
         INSERT INTO model_vitals 
-        (time, model_id, fairness, stability, security, privacy, transparency, status) 
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        (time, model_id, fairness, stability, security, privacy, transparency, status, wdag_trace) 
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
 
-    # Extract values properly (THIS is where your original instructions were wrong)
+    # Extract metrics safely
     fairness = results["metrics"].get("statistical_parity", {}).get("value", 0.85)
     stability = 1 - results["metrics"].get("psi", {}).get("value", 0.08)
-    security = 0.68 if results["overall_status"] != "normal" else 0.95
+    security = 0.68 if results["status"] != "normal" else 0.95
     privacy = results["metrics"].get("privacy_score", {}).get("value", 0.90)
     transparency = results["metrics"].get("gini", {}).get("value", 0.45)
 
@@ -104,13 +108,14 @@ try:
         security,
         privacy,
         transparency,
-        results["overall_status"]
+        results["status"],
+        wdag_trace_json  # Included graph trace here
     )
 
     cursor.execute(postgres_insert_query, record_to_insert)
     connection.commit()
 
-    print("✅ Audit Result saved to TimescaleDB")
+    print("✅ Audit Result & WDAG Trace saved to TimescaleDB")
 
 except Exception as error:
     print(f"❌ Failed to save to database: {error}")

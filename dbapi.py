@@ -5,10 +5,10 @@ from psycopg2.extras import RealDictCursor
 
 app = FastAPI(title="Guardrails Governance API")
 
-# Allow your React app to communicate with this API
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"], # Vite's default port
+    allow_origins=["http://localhost:5173"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -27,12 +27,11 @@ def get_db_connection():
 def get_latest_vitals():
     try:
         conn = get_db_connection()
-        # Use RealDictCursor to return rows as dictionaries instead of tuples
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Query TimescaleDB for the single most recent entry
+        
         query = """
-            SELECT time, fairness, stability, security, privacy, transparency, status 
+            SELECT time, fairness, stability, security, privacy, transparency, status, wdag_trace 
             FROM model_vitals 
             ORDER BY time DESC 
             LIMIT 1;
@@ -42,9 +41,6 @@ def get_latest_vitals():
         
         if not result:
             return {"status": "no_data"}
-            
-        # Optional: You could also run a second query here to get the last 10 rows 
-        # for your Drift Time-Series chart!
             
         return dict(result)
 
@@ -57,5 +53,4 @@ def get_latest_vitals():
 
 if __name__ == "__main__":
     import uvicorn
-    # Runs the server on http://localhost:8000
     uvicorn.run(app, host="0.0.0.0", port=8000)

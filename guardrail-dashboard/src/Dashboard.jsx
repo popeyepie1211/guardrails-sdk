@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion as Motion } from 'framer-motion';
-import ReactFlow, { Background as FlowBackground, Controls, MarkerType } from 'reactflow';
+import ReactFlow, { Background as FlowBackground, Controls, MarkerType, Handle, Position } from 'reactflow';
 import { 
   BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer,
   LineChart, Line, CartesianGrid 
@@ -19,12 +19,7 @@ const TypewriterEffect = ({ text }) => {
   
   const containerVariants = {
     hidden: { opacity: 1 },
-    visible: {
-      opacity: 1,
-      transition: {
-        staggerChildren: 0.08, 
-      },
-    },
+    visible: { opacity: 1, transition: { staggerChildren: 0.08 } },
   };
 
   const childVariants = {
@@ -41,9 +36,7 @@ const TypewriterEffect = ({ text }) => {
         className="text-6xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-white via-orange-100 to-orange-300 cursor-default"
       >
         {characters.map((char, index) => (
-          <Motion.span key={index} variants={childVariants}>
-            {char}
-          </Motion.span>
+          <Motion.span key={index} variants={childVariants}>{char}</Motion.span>
         ))}
       </Motion.h1>
       <Motion.span
@@ -66,9 +59,18 @@ const itemVariants = {
   show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
 };
 
-// --- CUSTOM WDAG NODES ---
+// --- CUSTOM WDAG NODE ---
+// --- CUSTOM WDAG NODE ---
 const GlassNode = ({ data }) => (
-  <div className={`px-5 py-3 rounded-xl border backdrop-blur-md shadow-2xl flex items-center gap-3 ${data.alert ? 'bg-red-900/20 border-red-500/50' : 'bg-black/45 border-orange-500/30'}`}>
+  <div className={`relative px-5 py-3 rounded-xl border backdrop-blur-md shadow-2xl flex items-center gap-3 ${data.alert ? 'bg-red-900/20 border-red-500/50' : 'bg-black/45 border-orange-500/30'}`}>
+    
+    {/* INCOMING CONNECTION POINT (Left) */}
+    <Handle 
+      type="target" 
+      position={Position.Left} 
+      className="w-2 h-2 bg-orange-500 border-none opacity-50" 
+    />
+
     <div className={`p-2 rounded-lg ${data.alert ? 'bg-red-500/20 text-red-400 animate-pulse' : 'bg-orange-500/15 text-orange-300'}`}>
       {data.icon}
     </div>
@@ -77,30 +79,38 @@ const GlassNode = ({ data }) => (
       <div className="text-lg font-black text-white">{data.label}</div>
     </div>
     {data.alert && <div className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 rounded-full animate-ping" />}
+
+    {/* OUTGOING CONNECTION POINT (Right) */}
+    <Handle 
+      type="source" 
+      position={Position.Right} 
+      className="w-2 h-2 bg-orange-500 border-none opacity-50" 
+    />
+    
   </div>
 );
 
+// ✅ FIX: Moved nodeTypes outside the component to prevent React Flow rendering warnings
 const nodeTypes = { glass: GlassNode };
 
-const WDAG_NODES = [
-  { id: '1', type: 'glass', data: { label: 'Data Stream', subtitle: 'Input', icon: <Database size={18} /> }, position: { x: 50, y: 100 } },
-  { id: '2', type: 'glass', data: { label: 'SDK Intercept', subtitle: 'Middleware', icon: <Shield size={18} /> }, position: { x: 350, y: 100 } },
-  { id: '3', type: 'glass', data: { label: 'Vitals Engine', subtitle: 'Analysis', icon: <Cpu size={18} />, alert: true }, position: { x: 650, y: 100 } },
-];
-
-const WDAG_EDGES = [
-  { id: 'e1-2', source: '1', target: '2', animated: true, style: { stroke: '#f97316', strokeWidth: 2 } },
-  { id: 'e2-3', source: '2', target: '3', animated: true, style: { stroke: '#ef4444', strokeWidth: 2 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444' } }
-];
+// --- ICON MAPPER ---
+const getIconForNode = (nodeName) => {
+  if (nodeName.includes('Data')) return <Database size={18} />;
+  if (nodeName.includes('Intercept') || nodeName.includes('Model')) return <Shield size={18} />;
+  return <Cpu size={18} />;
+};
 
 export default function ExecutiveDashboard() {
   const [metrics, setMetrics] = useState(null);
   const [history, setHistory] = useState([]);
+  
+  // Dynamic WDAG State
+  const [flowNodes, setFlowNodes] = useState([]);
+  const [flowEdges, setFlowEdges] = useState([]);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        // Pointing to your dedicated dbapi.py FastAPI server
         const response = await fetch('http://localhost:8000/api/vitals/latest');
         if (!response.ok) throw new Error('Network response was not ok');
         
@@ -108,7 +118,7 @@ export default function ExecutiveDashboard() {
         
         if (data.status === "no_data") return;
 
-        // Convert DB decimals (0.85) to percentages (85.0)
+        // Formulate main metrics
         const formattedMetrics = {
           ...data,
           fairness: (data.fairness * 100).toFixed(1),
@@ -116,7 +126,7 @@ export default function ExecutiveDashboard() {
           security: (data.security * 100).toFixed(1),
           privacy: (data.privacy * 100).toFixed(1),
           transparency: (data.transparency * 100).toFixed(1),
-          latency: 410, // Simulated network latency metric
+          latency: 410,
           shap: [
             { name: 'Income', weight: 0.45 }, 
             { name: 'Credit_Score', weight: 0.35 },
@@ -127,12 +137,66 @@ export default function ExecutiveDashboard() {
         
         setMetrics(formattedMetrics);
 
-        // Keep a rolling window of the last 15 data points for the live chart
+        // ✅ FIX: Resilient WDAG Trace Parsing
+        if (data.wdag_trace) {
+           let backendNodes = data.wdag_trace;
+           
+           // PostgreSQL/FastAPI sometimes sends JSONB as a string. Parse it if needed.
+           if (typeof backendNodes === 'string') {
+              try {
+                backendNodes = JSON.parse(backendNodes);
+              } catch (e) {
+                console.error("Failed to parse WDAG Trace string", e);
+              }
+           }
+
+           // If it happens to be wrapped in a 'nodes' key, extract it. Otherwise use it directly.
+           if (backendNodes.nodes) {
+             backendNodes = backendNodes.nodes;
+           }
+
+           const parsedNodes = [];
+           const parsedEdges = [];
+           let xPos = 50; 
+           
+           Object.values(backendNodes).forEach((backendNode) => {
+              const isAlert = backendNode.status === 'critical' || backendNode.status === 'warning';
+              
+              // Create dynamic Node
+              parsedNodes.push({
+                 id: backendNode.name,
+                 type: 'glass',
+                 position: { x: xPos, y: 100 },
+                 data: { 
+                    label: backendNode.name.replace(/_/g, ' '), 
+                    subtitle: backendNode.owner, 
+                    icon: getIconForNode(backendNode.name),
+                    alert: isAlert 
+                 }
+              });
+              xPos += 300; 
+
+              // Create dynamic Edge
+              backendNode.downstream.forEach(targetName => {
+                 parsedEdges.push({
+                    id: `e-${backendNode.name}-${targetName}`,
+                    source: backendNode.name,
+                    target: targetName,
+                    animated: true,
+                    style: { stroke: isAlert ? '#ef4444' : '#f97316', strokeWidth: 2 },
+                    markerEnd: { type: MarkerType.ArrowClosed, color: isAlert ? '#ef4444' : '#f97316' }
+                 });
+              });
+           });
+
+           setFlowNodes(parsedNodes);
+           setFlowEdges(parsedEdges);
+        }
+
+        // Rolling history for Line Chart
         setHistory(prev => {
            const timeLabel = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-           // PSI is the inverse of stability in this context
            const currentPsi = (1 - data.stability).toFixed(3); 
-           
            const newPoint = { time: timeLabel, psi: parseFloat(currentPsi) };
            const newHistory = [...prev, newPoint];
            return newHistory.length > 15 ? newHistory.slice(1) : newHistory;
@@ -165,15 +229,12 @@ export default function ExecutiveDashboard() {
 
   return (
     <div className="min-h-screen text-slate-200 font-sans selection:bg-orange-500/30 overflow-x-hidden relative bg-[#070707]">
-      
       <CyberBackground />
       <div className="absolute top-[-20%] left-[20%] w-[650px] h-[500px] bg-orange-600/20 rounded-full blur-[150px] pointer-events-none z-[1]" />
       <div className="absolute top-[-18%] right-[-8%] w-[520px] h-[420px] bg-red-600/15 rounded-full blur-[130px] pointer-events-none z-[1]" />
       <div className="absolute bottom-[-20%] left-[-10%] w-[520px] h-[420px] bg-orange-500/10 rounded-full blur-[130px] pointer-events-none z-[1]" />
 
       <div className="relative z-10 p-8 min-h-screen w-full">
-        
-        {/* HEADER SECTION WITH TYPEWRITER */}
         <Motion.header 
           initial={{ opacity: 0, y: -30 }} 
           animate={{ opacity: 1, y: 0 }} 
@@ -185,7 +246,6 @@ export default function ExecutiveDashboard() {
               <Motion.div whileHover={{ rotate: 15 }} className="bg-gradient-to-br from-[#431407] to-[#c2410c] p-3 rounded-xl shadow-[0_0_25px_rgba(249,115,22,0.35)] border border-orange-500/25">
                 <Shield size={32} className="text-white" />
               </Motion.div>
-              
               <TypewriterEffect text="GuardRails.AI" />
             </div>
             <p className="text-orange-200/60 text-[10px] font-black uppercase tracking-[0.4em] ml-1 flex items-center gap-2">
@@ -202,7 +262,6 @@ export default function ExecutiveDashboard() {
           </div>
         </Motion.header>
 
-        {/* VITALS GRID */}
         <Motion.div variants={containerVariants} initial="hidden" animate="show" className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-12">
           <Motion.div variants={itemVariants} whileHover={{ y: -5 }} className="h-full">
             <AnimatedWaveCard title="Fairness" value={`${fallback.fairness}%`} icon={<Users size={32} />} sub="SPD Metric" gradientColor="linear-gradient(744deg,#a855f7,#7e22ce 60%,#d8b4fe)" />
@@ -221,12 +280,11 @@ export default function ExecutiveDashboard() {
           </Motion.div>
         </Motion.div>
 
-        {/* WDAG MAP & ALERTS */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <Motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.6, delay: 0.3 }} className="col-span-2">
             <PurpleFeatureCard title="WDAG Integrity Map" description="Real-time Model Pipeline Trace visualization." buttonText="Inspect Nodes" className="border-orange-500/40 bg-gradient-to-br from-[#1a0b06]/95 to-[#0a0a0a]/75">
               <div className="h-[350px] w-full bg-black/35 rounded-xl overflow-hidden border border-orange-500/25 mt-2">
-                <ReactFlow nodes={WDAG_NODES} edges={WDAG_EDGES} nodeTypes={nodeTypes} fitView className="bg-transparent">
+                <ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} fitView className="bg-transparent">
                   <FlowBackground color="#fb923c" gap={20} size={1} className="opacity-10" />
                   <Controls className="bg-[#1b0f0a] border-orange-500/35 fill-orange-300 shadow-xl" />
                 </ReactFlow>
@@ -245,7 +303,6 @@ export default function ExecutiveDashboard() {
           </Motion.div>
         </div>
 
-        {/* BOTTOM ANALYSIS SECTION */}
         <Motion.div variants={containerVariants} initial="hidden" whileInView="show" viewport={{ once: true }} className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
            <Motion.div variants={itemVariants}>
               <PurpleFeatureCard title="Transparency Heatmap" description="Live SHAP feature importance distribution." buttonText="Download CSV" className="border-orange-500/40 bg-gradient-to-br from-[#1a0b06]/95 to-[#0a0a0a]/75">
@@ -285,7 +342,7 @@ export default function ExecutiveDashboard() {
                         strokeWidth={3}
                         dot={{ r: 4, fill: '#0a0a0a', stroke: '#fb923c', strokeWidth: 2 }}
                         activeDot={{ r: 6, fill: '#fb923c', stroke: '#fff' }}
-                        isAnimationActive={false} // Disable animation to prevent visual jumping on live updates
+                        isAnimationActive={false} 
                       />
                     </LineChart>
                   </ResponsiveContainer>
@@ -299,7 +356,6 @@ export default function ExecutiveDashboard() {
   );
 }
 
-// --- SUB-COMPONENTS ---
 const AlertItem = ({ title, status, color, desc, active }) => {
   const colorMap = {
     red: 'text-red-400 bg-red-500/10 border-red-500/30',
