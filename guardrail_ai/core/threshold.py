@@ -1,22 +1,15 @@
-"""
-core/threshold.py
 
-Implements dynamic threshold evaluation using the Three-Sigma Rule.
-"""
-
-from typing import Dict
-
+from typing import Dict, List
 from guardrail_ai.core.exceptions import ThresholdConfigurationError
 
-
 class ThresholdEvaluator:
-    """
-    Evaluates metric values against baseline mean and standard deviation
-    using configurable sigma rules.
-    """
+    
 
-    WARNING_SIGMA = 2
-    CRITICAL_SIGMA = 3
+    DOMAIN_CONFIG = {
+        "healthcare": {"k": 2, "persistence": 0},
+        "finance": {"k": 2.5, "persistence": 1},
+        "standard": {"k": 3, "persistence": 3},
+    }
 
     @staticmethod
     def evaluate(
@@ -24,69 +17,86 @@ class ThresholdEvaluator:
         value: float,
         mean: float,
         std: float,
-        direction: str = "upper",
-    ) -> Dict:
-        """
-        Evaluate a metric value against baseline.
+        direction: str,
+        domain: str,
+        history: List[str] = None,
+    ) -> dict:
 
-        direction:
-            - "upper": breach if value > mean + k*std
-            - "lower": breach if value < mean - k*std
-        """
+        if domain not in ThresholdEvaluator.DOMAIN_CONFIG:
+            raise ThresholdConfigurationError(f"Unsupported domain: {domain}")
 
-        if direction not in ("upper", "lower"):
-            raise ThresholdConfigurationError(
-                f"Invalid direction '{direction}' for metric '{metric_name}'."
-            )
+        config = ThresholdEvaluator.DOMAIN_CONFIG[domain]
+        k = config["k"]
+        persistence_required = config["persistence"]
 
+        # -----------------------------
+        # Edge Case: std = 0
+        # -----------------------------
         if std == 0:
-            # If std is zero, any deviation from mean is critical
-            if value != mean:
-                return {
-                    "metric": metric_name,
-                    "value": value,
-                    "status": "critical",
-                    "warning_threshold": mean,
-                    "critical_threshold": mean,
-                }
-            else:
-                return {
-                    "metric": metric_name,
-                    "value": value,
-                    "status": "normal",
-                    "warning_threshold": mean,
-                    "critical_threshold": mean,
-                }
+            return {
+                "metric": metric_name,
+                "value": value,
+                "mean": mean,
+                "std": std,
+                "status": "normal",
+                "domain": domain,
+                "k": k,
+            }
 
-        warning_threshold = (
-            mean + ThresholdEvaluator.WARNING_SIGMA * std
-            if direction == "upper"
-            else mean - ThresholdEvaluator.WARNING_SIGMA * std
-        )
+        # -----------------------------
+        # Thresholds
+        # -----------------------------
+        warning_upper = mean + (k - 1) * std
+        critical_upper = mean + k * std
 
-        critical_threshold = (
-            mean + ThresholdEvaluator.CRITICAL_SIGMA * std
-            if direction == "upper"
-            else mean - ThresholdEvaluator.CRITICAL_SIGMA * std
-        )
+        warning_lower = mean - (k - 1) * std
+        critical_lower = mean - k * std
 
         status = "normal"
 
+        # -----------------------------
+        # Directional Logic
+        # -----------------------------
         if direction == "upper":
-            if value > critical_threshold:
+            if value > critical_upper:
                 status = "critical"
-            elif value > warning_threshold:
+            elif value > warning_upper:
                 status = "warning"
+
+        elif direction == "lower":
+            if value < critical_lower:
+                status = "critical"
+            elif value < warning_lower:
+                status = "warning"
+
+        elif direction == "two-sided":
+            if value > critical_upper or value < critical_lower:
+                status = "critical"
+            elif value > warning_upper or value < warning_lower:
+                status = "warning"
+
         else:
-            if value < critical_threshold:
-                status = "critical"
-            elif value < warning_threshold:
-                status = "warning"
+            raise ThresholdConfigurationError(f"Invalid direction: {direction}")
+
+        # -----------------------------
+        # Persistence Filter
+        # -----------------------------
+        if history is not None and persistence_required > 0:
+            recent_failures = sum(
+                1 for h in history[-persistence_required:] if h in ["warning", "critical"]
+            )
+
+            if recent_failures < persistence_required:
+                # downgrade status to avoid alert fatigue
+                if status in ["warning", "critical"]:
+                    status = "normal"
 
         return {
             "metric": metric_name,
             "value": value,
+            "mean": mean,
+            "std": std,
             "status": status,
-            "warning_threshold": warning_threshold,
-            "critical_threshold": critical_threshold,
+            "domain": domain,
+            "k": k,
         }
