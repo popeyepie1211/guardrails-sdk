@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { motion as Motion } from 'framer-motion';
 import ReactFlow, { Background as FlowBackground, Controls, MarkerType } from 'reactflow';
 import { 
-  BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer 
+  BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  LineChart, Line, CartesianGrid 
 } from 'recharts';
-import { Shield, Activity, Users, Lock, Zap, AlertCircle, ChevronRight, Database, Cpu } from 'lucide-react';
+import { Shield, Activity, Users, Lock, Zap, Database, Cpu } from 'lucide-react';
 import 'reactflow/dist/style.css';
 
 // --- IMPORT CUSTOM COMPONENTS ---
@@ -13,7 +14,6 @@ import CyberBackground from './CyberBackground';
 import PurpleFeatureCard from './PurpleFeatureCard';
 
 // --- NEW LOCAL COMPONENT: TypewriterEffect ---
-// Recreates the custom Framer effect with a blinking cursor and staggered reveal
 const TypewriterEffect = ({ text }) => {
   const characters = text.split("");
   
@@ -22,7 +22,7 @@ const TypewriterEffect = ({ text }) => {
     visible: {
       opacity: 1,
       transition: {
-        staggerChildren: 0.08, // Controls the typing speed
+        staggerChildren: 0.08, 
       },
     },
   };
@@ -46,7 +46,6 @@ const TypewriterEffect = ({ text }) => {
           </Motion.span>
         ))}
       </Motion.h1>
-      {/* Blinking Cyber-Cursor */}
       <Motion.span
         animate={{ opacity: [0, 1, 0] }}
         transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
@@ -96,22 +95,72 @@ const WDAG_EDGES = [
 
 export default function ExecutiveDashboard() {
   const [metrics, setMetrics] = useState(null);
+  const [history, setHistory] = useState([]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setMetrics({ status: 'critical' }), 1000);
-    return () => clearTimeout(timer);
+    const fetchDashboardData = async () => {
+      try {
+        // Pointing to your dedicated dbapi.py FastAPI server
+        const response = await fetch('http://localhost:8000/api/vitals/latest');
+        if (!response.ok) throw new Error('Network response was not ok');
+        
+        const data = await response.json();
+        
+        if (data.status === "no_data") return;
+
+        // Convert DB decimals (0.85) to percentages (85.0)
+        const formattedMetrics = {
+          ...data,
+          fairness: (data.fairness * 100).toFixed(1),
+          stability: (data.stability * 100).toFixed(1),
+          security: (data.security * 100).toFixed(1),
+          privacy: (data.privacy * 100).toFixed(1),
+          transparency: (data.transparency * 100).toFixed(1),
+          latency: 410, // Simulated network latency metric
+          shap: [
+            { name: 'Income', weight: 0.45 }, 
+            { name: 'Credit_Score', weight: 0.35 },
+            { name: 'Gender', weight: 0.12 }, 
+            { name: 'Employment', weight: 0.08 }
+          ]
+        };
+        
+        setMetrics(formattedMetrics);
+
+        // Keep a rolling window of the last 15 data points for the live chart
+        setHistory(prev => {
+           const timeLabel = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+           // PSI is the inverse of stability in this context
+           const currentPsi = (1 - data.stability).toFixed(3); 
+           
+           const newPoint = { time: timeLabel, psi: parseFloat(currentPsi) };
+           const newHistory = [...prev, newPoint];
+           return newHistory.length > 15 ? newHistory.slice(1) : newHistory;
+        });
+
+      } catch (error) {
+        console.error('Error fetching dashboard data from API:', error);
+      }
+    };
+
+    fetchDashboardData();
+    const interval = setInterval(fetchDashboardData, 3000);
+    return () => clearInterval(interval);
   }, []);
 
   const fallback = {
-    fairness: metrics?.fairness || 88,
-    stability: metrics?.stability || 92,
-    security: metrics?.security || 75,
-    latency: metrics?.latency || 410,
-    status: metrics?.status || 'critical',
-    shap: [
+    fairness: metrics?.fairness ?? 88,
+    stability: metrics?.stability ?? 92,
+    security: metrics?.security ?? 75,
+    privacy: metrics?.privacy ?? 95,
+    transparency: metrics?.transparency ?? 81,
+    latency: metrics?.latency ?? 410,
+    status: metrics?.status ?? 'critical',
+    shap: metrics?.shap ?? [
       { name: 'Income', weight: 0.45 }, { name: 'Credit_History', weight: 0.35 },
       { name: 'Zip_Code', weight: 0.12 }, { name: 'Employment', weight: 0.08 }
-    ]
+    ],
+    history: history.length > 0 ? history : [{ time: '00:00:00', psi: 0 }]
   };
 
   return (
@@ -137,7 +186,6 @@ export default function ExecutiveDashboard() {
                 <Shield size={32} className="text-white" />
               </Motion.div>
               
-              {/* BRANDED TITLE WITH TYPEWRITER EFFECT */}
               <TypewriterEffect text="GuardRails.AI" />
             </div>
             <p className="text-orange-200/60 text-[10px] font-black uppercase tracking-[0.4em] ml-1 flex items-center gap-2">
@@ -166,10 +214,10 @@ export default function ExecutiveDashboard() {
             <AnimatedWaveCard title="Security" value={`${fallback.security}%`} icon={<Shield size={32} />} sub="Robustness" gradientColor={fallback.status !== 'normal' ? 'linear-gradient(744deg,#ef4444,#b91c1c 60%,#f87171)' : undefined} />
           </Motion.div>
           <Motion.div variants={itemVariants} whileHover={{ y: -5 }} className="h-full">
-            <AnimatedWaveCard title="Privacy" value="95%" icon={<Lock size={32} />} sub="Diff-Privacy" gradientColor="linear-gradient(744deg,#c084fc,#9333ea 60%,#e9d5ff)" />
+            <AnimatedWaveCard title="Privacy" value={`${fallback.privacy}%`} icon={<Lock size={32} />} sub="Diff-Privacy" gradientColor="linear-gradient(744deg,#c084fc,#9333ea 60%,#e9d5ff)" />
           </Motion.div>
           <Motion.div variants={itemVariants} whileHover={{ y: -5 }} className="h-full">
-            <AnimatedWaveCard title="Transparency" value="81%" icon={<Zap size={32} />} sub="Explainability" gradientColor="linear-gradient(744deg,#f59e0b,#b45309 60%,#fbbf24)" />
+            <AnimatedWaveCard title="Transparency" value={`${fallback.transparency}%`} icon={<Zap size={32} />} sub="Explainability" gradientColor="linear-gradient(744deg,#f59e0b,#b45309 60%,#fbbf24)" />
           </Motion.div>
         </Motion.div>
 
@@ -190,7 +238,7 @@ export default function ExecutiveDashboard() {
             <PurpleFeatureCard title="Remediation Funnel" description="Active alerts and system status checks." className="border-orange-500/40 bg-gradient-to-br from-[#1a0b06]/95 to-[#0a0a0a]/75">
               <div className="space-y-4 mt-2">
                  <AlertItem title="Security Breach" status="CRITICAL" color="red" desc={`Latency (${fallback.latency}ms) > 200ms Limit`} active={fallback.status !== 'normal'} />
-                 <AlertItem title="Stability Check" status="STABLE" color="emerald" desc="PSI within baseline (0.02)" active={false} />
+                 <AlertItem title="Stability Check" status="STABLE" color="emerald" desc="PSI within baseline limits" active={false} />
                  <AlertItem title="Fairness Status" status="VERIFIED" color="purple" desc="SPD bias below detection" active={false} />
               </div>
             </PurpleFeatureCard>
@@ -219,12 +267,28 @@ export default function ExecutiveDashboard() {
            </Motion.div>
 
            <Motion.div variants={itemVariants}>
-              <PurpleFeatureCard title="Drift Time-Series" description="Awaiting incoming stream connection." className="border-orange-500/40 bg-gradient-to-br from-[#1a0b06]/95 to-[#0a0a0a]/75">
-                <div className="h-56 mt-4 flex flex-col justify-center items-center border border-dashed border-orange-500/35 rounded-2xl bg-black/30 group hover:border-orange-400/90 transition-colors duration-300">
-                   <Motion.div animate={{ rotate: 360 }} transition={{ duration: 8, repeat: Infinity, ease: "linear" }}>
-                     <Zap className="text-orange-400/55 group-hover:text-orange-300 transition-colors duration-300 mb-3" size={40} />
-                   </Motion.div>
-                   <p className="text-orange-200/65 font-mono text-xs uppercase tracking-widest group-hover:text-orange-200 transition-colors">Awaiting Live Stream</p>
+              <PurpleFeatureCard title="Drift Time-Series" description="Live PSI stability tracking." className="border-orange-500/40 bg-gradient-to-br from-[#1a0b06]/95 to-[#0a0a0a]/75">
+                <div className="h-56 mt-4">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={fallback.history}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(249, 115, 22, 0.1)" vertical={false} />
+                      <XAxis dataKey="time" stroke="#fed7aa" fontSize={10} axisLine={false} tickLine={false} />
+                      <YAxis stroke="#fed7aa" fontSize={10} axisLine={false} tickLine={false} width={40} domain={['auto', 'auto']} />
+                      <Tooltip 
+                        contentStyle={{backgroundColor: 'rgba(9, 9, 11, 0.95)', border: '1px solid rgba(249,115,22,0.4)', borderRadius: '12px', color: '#fff'}}
+                        itemStyle={{ color: '#fb923c' }}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="psi" 
+                        stroke="#fb923c" 
+                        strokeWidth={3}
+                        dot={{ r: 4, fill: '#0a0a0a', stroke: '#fb923c', strokeWidth: 2 }}
+                        activeDot={{ r: 6, fill: '#fb923c', stroke: '#fff' }}
+                        isAnimationActive={false} // Disable animation to prevent visual jumping on live updates
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
               </PurpleFeatureCard>
            </Motion.div>
