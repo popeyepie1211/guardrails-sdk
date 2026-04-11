@@ -34,11 +34,21 @@ pytest -v
 This will automatically discover and run all tests in the `tests/` folder.
 
 ---
+## TimescaleDB Config
+ 1. Start TimescaleDB using Docker
+Run the following command to start a TimescaleDB container:
 
-## Quick Check
-
-After installation, you should be able to import the package:
-
-```python
-import guardrail_ai
+```bash
+docker run -d \
+--name timescale-guardrail \
+-p 5432:5432 \
+-e POSTGRES_PASSWORD=password \
+timescale/timescaledb:latest-pg15
 ```
+2. Connect to PostgreSQL
+   ```bash
+   docker exec -it timescale-guardrail psql -U postgres
+   ```
+   
+
+
