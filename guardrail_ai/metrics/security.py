@@ -10,20 +10,18 @@ class Security:
 
     @staticmethod
     def linf_norm(expected: np.ndarray, actual: np.ndarray) -> float:
-        """
-        Computes L-infinity norm (max absolute difference)
-        """
+    
+
         if len(expected) == 0 or len(actual) == 0:
-            return 0.0
+           return 0.0
 
         expected = np.asarray(expected)
         actual = np.asarray(actual)
 
-        min_len = min(len(expected), len(actual))
-        expected = expected[:min_len]
-        actual = actual[:min_len]
+        mean = np.mean(expected)
+        std = np.std(expected) + 1e-6
 
-        return float(np.max(np.abs(actual - expected)))
+        return float(np.max(np.abs(actual - mean)) / std)
 
     @staticmethod
     def ood_score(expected: np.ndarray, actual: np.ndarray, threshold: float = 3.0) -> float:

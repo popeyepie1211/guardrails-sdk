@@ -4,6 +4,7 @@ import pandas as pd
 from guardrail_ai.wdag.graph import WDAG
 from guardrail_ai.wdag.failure import SystemFailure
 from guardrail_ai.core.vitals_engine import VitalsEngine
+from guardrail_ai.wdag.heartbeat import HeartbeatMonitor
 
 
 class WDAGExecutor:
@@ -14,12 +15,13 @@ class WDAGExecutor:
     def __init__(self, graph: WDAG, engine: VitalsEngine) -> None:
         self.graph = graph
         self.engine = engine
+        self.heartbeat = HeartbeatMonitor(graph)
 
     # -----------------------------
     # Execute a node
     # -----------------------------
     def run(self, node_name: str, df: pd.DataFrame) -> Dict[str, Any]:
-
+        self.heartbeat.ping(node_name)
         node = self.graph.get_node(node_name)
 
         try:
@@ -35,14 +37,19 @@ class WDAGExecutor:
             # Update node
             # -----------------------------
             node.update_metrics(metrics)
-            node.update_status(overall_status)
+            status_map = {
+            "normal": "green",
+            "warning": "warning",
+            "critical": "critical"
+}
+            node.update_status(status_map.get(overall_status, "green"))
 
             # -----------------------------
             # If critical → propagate
             # -----------------------------
             if overall_status == "critical":
                 self.graph.propagate_impact(node)
-
+            
             return {
                 "node": node_name,
                 "status": overall_status,

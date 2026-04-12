@@ -32,7 +32,6 @@ class SHAPExplainability:
 
         score = mean_abs * entropy
 
-        # Combine both
-        score = mean_abs * entropy
+       
 
         return float(score)

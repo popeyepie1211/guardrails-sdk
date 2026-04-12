@@ -14,6 +14,7 @@ from typing import Dict, Any
 import pandas as pd
 import numpy as np
 from guardrail_ai import metrics
+from guardrail_ai.core.persistence import PersistenceManager
 from guardrail_ai.core.validator import Validator
 from guardrail_ai.core.threshold import ThresholdEvaluator
 from guardrail_ai.core.exceptions import GuardrailException
@@ -64,7 +65,7 @@ class VitalsEngine:
             self.baseline,
             fairness_enabled=self.fairness_enabled,
         )
-
+        self.persistence = PersistenceManager()
     # -----------------------------
     # Metadata Validation
     # -----------------------------
@@ -181,14 +182,17 @@ class VitalsEngine:
             std = baseline_metric["std"]
 
             direction = self.METRIC_DIRECTIONS.get(metric_name, "upper")
-
+            history = self.persistence.get_history(metric_name)
+            
             result = ThresholdEvaluator.evaluate(
             metric_name=metric_name,
             value=value,
             mean=mean,
             std=std,
             direction=direction,
+            history=history,
             domain=self.domain,
+            
         )
 
             evaluated[metric_name] = result
@@ -197,12 +201,43 @@ class VitalsEngine:
                overall_status = "critical"
             elif result["status"] == "warning" and overall_status != "critical":
                overall_status = "warning"
-
+            self.persistence.save_metric_status(
+              metric_name,
+              result["status"]
+)        
+       
         return {
         "metrics": evaluated,
         "overall_status": overall_status,
     }
+    def compute_psi(expected: np.ndarray, actual: np.ndarray, bins: int = 10) -> float:
+    
 
+        expected = np.asarray(expected)
+        actual = np.asarray(actual)
+
+    # Create bins from expected distribution
+        bin_edges = np.histogram_bin_edges(expected, bins=bins)
+
+    # Histogram counts
+        expected_counts, _ = np.histogram(expected, bins=bin_edges)
+        actual_counts, _ = np.histogram(actual, bins=bin_edges)
+
+    # Convert to proportions
+        expected_perc = expected_counts / len(expected)
+        actual_perc = actual_counts / len(actual)
+
+    # Avoid division by zero
+        epsilon = 1e-6
+        expected_perc = np.where(expected_perc == 0, epsilon, expected_perc)
+        actual_perc = np.where(actual_perc == 0, epsilon, actual_perc)
+
+    # PSI formula
+        psi = np.sum((actual_perc - expected_perc) * np.log(actual_perc / expected_perc))
+
+        return float(psi)
+    
+    
     def _compute_metrics(self, df: pd.DataFrame) -> Dict[str, float]:
 
         metrics = {}
@@ -241,33 +276,48 @@ class VitalsEngine:
         psi_values = []
 
         for col in self.metadata["numerical_features"]:
+            expected = self.baseline["distributions"]["numerical"][col]
             actual = df[col].values
 
-            baseline_mean = self.baseline["baseline_summary"]["psi"]["mean"]
-            expected = np.full(len(actual), baseline_mean)
 
-            psi_values.append(PSI.compute(expected, actual))
-
-            metrics["psi"] = float(np.mean(psi_values)) if psi_values else 0.0
+            psi_col = PSI.compute_psi(expected, actual)
+            psi_values.append(psi_col)
+            
+        metrics["psi"] = float(np.mean(psi_values)) if psi_values else 0.0
 
     # -----------------------------
-    # Security (L∞ + OOD)
+    # Security: L∞
     # -----------------------------
         linf_values = []
+
+        for col in self.metadata["numerical_features"]:
+            actual = df[col].values
+            expected = self.baseline["distributions"]["numerical"][col]
+
+            std = np.std(expected) + 1e-6
+            linf = np.max(np.abs(actual - np.mean(expected))) / std
+            linf_values.append(linf)
+
+        metrics["linf"] = float(np.mean(linf_values)) if linf_values else 0.0
+
+
+        # -----------------------------
+        # OOD Score
+        # -----------------------------
         ood_values = []
 
         for col in self.metadata["numerical_features"]:
             actual = df[col].values
+            expected = self.baseline["distributions"]["numerical"][col]
 
-            baseline_mean = self.baseline["baseline_summary"]["linf"]["mean"]
-            expected = np.full(len(actual), baseline_mean)
+            mean = np.mean(expected)
+            std = np.std(expected) + 1e-6
 
-            sec = Security.compute(expected, actual)
+            z_scores = np.abs((actual - mean) / std)
+            ood_ratio = np.mean(z_scores > 3)  # % outliers
 
-            linf_values.append(sec["linf"])
-            ood_values.append(sec["ood_score"])
+            ood_values.append(ood_ratio)
 
-        metrics["linf"] = float(np.mean(linf_values)) if linf_values else 0.0
         metrics["ood_score"] = float(np.mean(ood_values)) if ood_values else 0.0
 
     # -----------------------------
