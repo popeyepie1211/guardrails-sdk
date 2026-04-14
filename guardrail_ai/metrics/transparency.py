@@ -15,7 +15,7 @@ class SHAPExplainability:
         shap_values = np.asarray(shap_values)
 
         # Mean absolute contribution
-        mean_abs = np.mean(np.abs(shap_values))
+        mean_abs = np.mean(np.abs(shap_values)) / (np.max(np.abs(shap_values)) + 1e-6)
 
         # Distribution uniformity (entropy-like)
         abs_vals = np.abs(shap_values)
@@ -28,9 +28,10 @@ class SHAPExplainability:
         entropy = -np.sum(probs * np.log(probs + 1e-9))
 
 # FIX: prevent tiny negative due to float error
-        entropy = max(0.0, entropy)
-
+        max_entropy = np.log(len(abs_vals) + 1e-9)
+        entropy = entropy / max_entropy
         score = mean_abs * entropy
+        
 
        
 

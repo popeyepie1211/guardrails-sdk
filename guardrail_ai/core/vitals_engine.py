@@ -284,7 +284,7 @@ class VitalsEngine:
             psi_values.append(psi_col)
             
         metrics["psi"] = float(np.mean(psi_values)) if psi_values else 0.0
-
+        metrics["psi"] = min(metrics["psi"], 1.0)
     # -----------------------------
     # Security: L∞
     # -----------------------------
