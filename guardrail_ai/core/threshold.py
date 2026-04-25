@@ -1,15 +1,12 @@
 
 from typing import Dict, List
 from guardrail_ai.core.exceptions import ThresholdConfigurationError
+from guardrail_ai.config import DOMAIN_CONFIG
 
 class ThresholdEvaluator:
     
 
-    DOMAIN_CONFIG = {
-        "healthcare": {"k": 2, "persistence": 0},
-        "finance": {"k": 2.5, "persistence": 1},
-        "standard": {"k": 3, "persistence": 3},
-    }
+    DOMAIN_CONFIG = DOMAIN_CONFIG
 
     @staticmethod
     def evaluate(
@@ -82,15 +79,19 @@ class ThresholdEvaluator:
         # Persistence Filter
         # -----------------------------
         if history is not None and persistence_required > 0:
-            recent_failures = sum(
-                1 for h in history[-persistence_required:] if h in ["warning", "critical"]
-            )
+           failures = sum(
+            1 for h in history[-persistence_required:] if h in ["warning", "critical"]
+                     )
 
-            if recent_failures < persistence_required:
-                # downgrade status to avoid alert fatigue
-                if status in ["warning", "critical"]:
-                    status = "normal"
+           if status in ["warning", "critical"]:
+                if value > mean + (k * 3 * std):   # extreme deviation
+                    status = "critical"
 
+                elif failures < persistence_required:
+                   status = "warning"
+
+                else:
+                   status = "critical"
         return {
             "metric": metric_name,
             "value": value,
