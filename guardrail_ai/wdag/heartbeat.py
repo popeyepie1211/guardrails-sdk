@@ -1,5 +1,5 @@
 from typing import Dict, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 from guardrail_ai.wdag.graph import WDAG
 from guardrail_ai.config import HEARTBEAT_TIMEOUT_MINUTES
@@ -19,14 +19,14 @@ class HeartbeatMonitor:
     # Update heartbeat
     # -----------------------------
     def ping(self, node_name: str) -> None:
-        self.last_seen[node_name] = datetime.utcnow()
+        self.last_seen[node_name] = datetime.now(UTC)
 
     # -----------------------------
     # Check for zombie nodes
     # -----------------------------
     def check_timeouts(self) -> List[str]:
     
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         timed_out_nodes = []
 
         for node_name, node in self.graph.nodes.items():

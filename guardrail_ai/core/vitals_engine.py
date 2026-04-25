@@ -275,9 +275,19 @@ class VitalsEngine:
     # -----------------------------
         psi_values = []
 
+        numerical_distributions = (
+            self.baseline.get("distributions", {}).get("numerical", {})
+            if isinstance(self.baseline, dict)
+            else {}
+        )
+
         for col in self.metadata["numerical_features"]:
-            expected = self.baseline["distributions"]["numerical"][col]
             actual = df[col].values
+
+            expected = numerical_distributions.get(col)
+            if expected is None:
+                baseline_mean = self.baseline["baseline_summary"]["psi"]["mean"]
+                expected = np.full(len(actual), baseline_mean)
 
 
             psi_col = PSI.compute_psi(expected, actual)
@@ -292,7 +302,11 @@ class VitalsEngine:
 
         for col in self.metadata["numerical_features"]:
             actual = df[col].values
-            expected = self.baseline["distributions"]["numerical"][col]
+
+            expected = numerical_distributions.get(col)
+            if expected is None:
+                baseline_mean = self.baseline["baseline_summary"]["linf"]["mean"]
+                expected = np.full(len(actual), baseline_mean)
 
             std = np.std(expected) + 1e-6
             linf = np.max(np.abs(actual - np.mean(expected))) / std
@@ -308,7 +322,11 @@ class VitalsEngine:
 
         for col in self.metadata["numerical_features"]:
             actual = df[col].values
-            expected = self.baseline["distributions"]["numerical"][col]
+
+            expected = numerical_distributions.get(col)
+            if expected is None:
+                baseline_mean = self.baseline["baseline_summary"]["ood_score"]["mean"]
+                expected = np.full(len(actual), baseline_mean)
 
             mean = np.mean(expected)
             std = np.std(expected) + 1e-6

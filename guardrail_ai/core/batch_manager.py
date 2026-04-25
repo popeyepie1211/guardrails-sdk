@@ -4,7 +4,7 @@ from guardrail_ai.config import DEFAULT_BATCH_SIZE, MIN_BATCH_SIZE, BATCH_TIMEOU
 
 from typing import List, Optional
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 
 class BatchManager:
@@ -28,7 +28,7 @@ class BatchManager:
         self.timeout = timedelta(seconds=timeout_seconds)
 
         self.buffer: List[pd.DataFrame] = []
-        self.last_flush_time = datetime.utcnow()
+        self.last_flush_time = datetime.now(UTC)
 
     # -----------------------------
     # Add data
@@ -37,7 +37,7 @@ class BatchManager:
         self.buffer.append(df)
 
         total_rows = sum(len(chunk) for chunk in self.buffer)
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         # 1️⃣ Size-based trigger
         if total_rows >= self.batch_size:
@@ -58,7 +58,7 @@ class BatchManager:
     def _flush(self) -> pd.DataFrame:
         batch = pd.concat(self.buffer, ignore_index=True)
         self.buffer.clear()
-        self.last_flush_time = datetime.utcnow()
+        self.last_flush_time = datetime.now(UTC)
         return batch
 
     # -----------------------------

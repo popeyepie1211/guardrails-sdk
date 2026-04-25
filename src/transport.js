@@ -27,6 +27,9 @@ export class Transport {
     try {
       const response = await this.api.post('', {    // POST to the base URL with the batch as the body
         batchId: Date.now().toString(36), // Simple unique ID for the batch
+        modelId: this.modelId,
+        sdkVersion: '1.0.0',
+        sentAt: new Date().toISOString(),
         payload: batch
       });
       

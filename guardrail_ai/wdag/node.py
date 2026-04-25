@@ -8,7 +8,7 @@ class Node:
     Handles status, metrics, and dependency relationships.
     """
 
-    VALID_STATUSES = {"green", "warning", "critical", "locked", "grey"}
+    VALID_STATUSES = {"green", "warning", "critical", "locked", "grey", "normal"}
 
     def __init__(self, name: str, owner: str) -> None:
         self.name = name

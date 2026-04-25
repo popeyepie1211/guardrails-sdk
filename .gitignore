@@ -1,8 +1,32 @@
+# Python
 venv/
 __pycache__/
 *.pyc
+
+# Env
 .env
+
+# Node
 node_modules/
-.env
+package-lock.json
+
+# Build
 dist/
+build/
+
+# Logs
 *.log
+
+# Python packaging
+*.egg-info/
+guardrail_ai.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
+
+# Data files (optional)
+*.csv

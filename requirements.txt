@@ -9,3 +9,8 @@ pytest==9.0.2
 python-dateutil==2.9.0.post0
 six==1.17.0
 tzdata==2025.3
+fastapi==0.104.1
+uvicorn==0.24.0
+psycopg[binary]==3.2.13
+redis==5.0.1
+python-dotenv==1.0.0

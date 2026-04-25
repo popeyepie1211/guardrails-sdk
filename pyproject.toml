@@ -3,7 +3,15 @@ name = "guardrail_ai"
 version = "0.1.0"
 description = "Guardrail AI Monitoring Engine"
 authors = [{name="Qudsiya Siddique"}]
-dependencies = []
+dependencies = [
+    "fastapi>=0.104.1",
+    "uvicorn>=0.24.0",
+    "psycopg[binary]>=3.2.13",
+    "redis>=5.0.1",
+    "pandas>=3.0.0",
+    "numpy>=2.4.0",
+    "python-dotenv>=1.0.0"
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

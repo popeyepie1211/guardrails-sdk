@@ -10,7 +10,7 @@ const AI_Model = {
     
     // Simple logic: Approve if credit score > 700
     return {
-      status: data.creditScore > 700 ? "Approved" : "Rejected",
+      status: data.credit_score > 700 ? "Approved" : "Rejected",
       confidence: 0.98
     };
   }
@@ -21,7 +21,7 @@ const AI_Model = {
 guardrail.init({
   apiKey: "user_secret_pk_12345",
   modelId: "loan_risk_model_v1",
-  endpoint: "http://localhost:3000/v1/ingest" // Points to a local test server
+  endpoint: "http://localhost:3000/v1/ingest" // Points to local ingestion server
 });
 
 // 3. WRAP THE MODEL
@@ -37,7 +37,7 @@ const runTest = async () => {
     const score = Math.floor(Math.random() * (850 - 500 + 1)) + 500;
     console.log(`[Test] Requesting prediction for Credit Score: ${score}`);
     
-    const result = await securedModel.predict({ creditScore: score });
+    const result = await securedModel.predict({ credit_score: score, income: 50000, gender: score > 675 ? 'M' : 'F' });
     console.log(`[Test] Result: ${result.status}`);
   }
   

@@ -60,6 +60,7 @@ class WDAG:
     def _status_to_score(self, status: str) -> float:
         mapping = {
         "green": 1.0,
+        "normal": 1.0,
         "warning": 0.6,
         "critical": 0.0,
         "locked": 0.0,

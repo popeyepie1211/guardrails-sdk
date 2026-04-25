@@ -5,6 +5,9 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
+    "start:ingestion": "node ingestion-server.js",
+    "dev:ingestion": "nodemon ingestion-server.js",
+    "test:mock": "node test/mock-model.js",
     "test": "node test/mock-model.js"
   },
   "keywords": [],
@@ -16,6 +19,7 @@
     "express": "^5.2.1",
     "ioredis": "^5.10.0",
     "nanoid": "^5.1.6",
-    "redis": "^5.11.0"
+    "redis": "^5.11.0",
+    "uuid": "^9.0.0"
   }
 }

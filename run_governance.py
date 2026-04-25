@@ -1,7 +1,7 @@
 import json
 import os
 import pandas as pd
-import psycopg2
+import psycopg
 from datetime import datetime
 
 # Core Engine Imports
@@ -78,7 +78,7 @@ wdag_trace_json = json.dumps(graph.to_dict())
 
 # 6. Save to TimescaleDB
 try:
-    connection = psycopg2.connect(
+    connection = psycopg.connect(
         user="postgres",
         password="password",
         host="127.0.0.1",
