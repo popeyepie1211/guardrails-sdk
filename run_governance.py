@@ -34,7 +34,7 @@ baseline_config = {
     }
 }
 
-# 3. Initialize engine & metadata
+
 engine = VitalsEngine(
     baseline=baseline_config,
     metadata={
@@ -52,7 +52,7 @@ engine = VitalsEngine(
     }
 )
 
-# 4. Initialize WDAG Graph
+
 graph = WDAG()
 data_node = Node("Data_Stream", "Data Engineer")
 intercept_node = Node("SDK_Intercept", "Middleware")
@@ -109,7 +109,7 @@ try:
         privacy,
         transparency,
         results["status"],
-        wdag_trace_json  # Included graph trace here
+        wdag_trace_json 
     )
 
     cursor.execute(postgres_insert_query, record_to_insert)

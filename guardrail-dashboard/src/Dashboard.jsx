@@ -8,7 +8,6 @@ import {
 import { Shield, Activity, Users, Lock, Zap, Database, Cpu } from 'lucide-react';
 import 'reactflow/dist/style.css';
 
-// --- IMPORT CUSTOM COMPONENTS ---
 import AnimatedWaveCard from './AnimatedWaveCard';
 import CyberBackground from './CyberBackground';
 import PurpleFeatureCard from './PurpleFeatureCard';
@@ -59,8 +58,7 @@ const itemVariants = {
   show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
 };
 
-// --- CUSTOM WDAG NODE ---
-// --- CUSTOM WDAG NODE ---
+
 const GlassNode = ({ data }) => (
   <div className={`relative px-5 py-3 rounded-xl border backdrop-blur-md shadow-2xl flex items-center gap-3 ${data.alert ? 'bg-red-900/20 border-red-500/50' : 'bg-black/45 border-orange-500/30'}`}>
     
@@ -137,11 +135,11 @@ export default function ExecutiveDashboard() {
         
         setMetrics(formattedMetrics);
 
-        // ✅ FIX: Resilient WDAG Trace Parsing
+        
         if (data.wdag_trace) {
            let backendNodes = data.wdag_trace;
            
-           // PostgreSQL/FastAPI sometimes sends JSONB as a string. Parse it if needed.
+           
            if (typeof backendNodes === 'string') {
               try {
                 backendNodes = JSON.parse(backendNodes);
@@ -150,7 +148,7 @@ export default function ExecutiveDashboard() {
               }
            }
 
-           // If it happens to be wrapped in a 'nodes' key, extract it. Otherwise use it directly.
+         
            if (backendNodes.nodes) {
              backendNodes = backendNodes.nodes;
            }
