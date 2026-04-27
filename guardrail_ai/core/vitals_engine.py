@@ -98,7 +98,7 @@ class VitalsEngine:
         if len(self.metadata["quasi_identifier_columns"]) == 0:
             raise GuardrailException("'quasi_identifier_columns' cannot be empty.")
         # prediction type validation
-        valid_types = ["probability", "binary", "multiclass"]
+        valid_types = ["probability", "binary", "multiclass", "regression"]
 
         if self.metadata["prediction_type"] not in valid_types:
             raise GuardrailException(

@@ -4,7 +4,7 @@ import psycopg
 from psycopg.rows import dict_row
 import json
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 app = FastAPI(title="Guardrails Governance API")
 
@@ -154,17 +154,32 @@ def list_models():
         cursor = conn.cursor(row_factory=dict_row)
         
         query = """
-            SELECT DISTINCT ON (model_id) 
-                model_id, 
-                time, 
-                status, 
-                fairness, 
-                stability, 
-                security, 
-                privacy, 
-                transparency
-            FROM model_vitals 
-            ORDER BY model_id, time DESC;
+            WITH all_models AS (
+                SELECT model_id FROM models
+                UNION
+                SELECT DISTINCT model_id FROM model_vitals
+            )
+            SELECT
+                am.model_id,
+                COALESCE(m.model_name, am.model_id) AS model_name,
+                COALESCE(m.domain, 'standard') AS domain,
+                v.time,
+                v.status,
+                v.fairness,
+                v.stability,
+                v.security,
+                v.privacy,
+                v.transparency
+            FROM all_models am
+            LEFT JOIN models m ON m.model_id = am.model_id
+            LEFT JOIN LATERAL (
+                SELECT time, status, fairness, stability, security, privacy, transparency
+                FROM model_vitals
+                WHERE model_id = am.model_id
+                ORDER BY time DESC
+                LIMIT 1
+            ) v ON TRUE
+            ORDER BY am.model_id;
         """
         cursor.execute(query)
         results = cursor.fetchall()
@@ -173,6 +188,125 @@ def list_models():
         
         return [dict(row) for row in results]
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/shap/history")
+def get_shap_history(
+    model_id: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=2000),
+    hours: int = Query(24, ge=1, le=720),
+):
+    """Return SHAP top-feature history rows for trend and audit views."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(row_factory=dict_row)
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+
+        if model_id:
+            cursor.execute(
+                """
+                SELECT time, model_id, batch_id, feature_name, shap_value
+                FROM shap_summary
+                WHERE model_id = %s AND time >= %s
+                ORDER BY time DESC
+                LIMIT %s;
+                """,
+                (model_id, cutoff_time, limit),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT time, model_id, batch_id, feature_name, shap_value
+                FROM shap_summary
+                WHERE time >= %s
+                ORDER BY time DESC
+                LIMIT %s;
+                """,
+                (cutoff_time, limit),
+            )
+
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/nodes/history")
+def get_node_status_history(
+    model_id: Optional[str] = Query(None),
+    node_name: Optional[str] = Query(None),
+    limit: int = Query(500, ge=1, le=5000),
+    hours: int = Query(24, ge=1, le=720),
+):
+    """Return node status transitions for WDAG auditability."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(row_factory=dict_row)
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+
+        query = """
+            SELECT time, model_id, batch_id, node_name, status
+            FROM node_status_history
+            WHERE time >= %s
+        """
+        params: List[Any] = [cutoff_time]
+
+        if model_id:
+            query += " AND model_id = %s"
+            params.append(model_id)
+        if node_name:
+            query += " AND node_name = %s"
+            params.append(node_name)
+
+        query += " ORDER BY time DESC LIMIT %s"
+        params.append(limit)
+
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/heartbeat/latest")
+def get_latest_heartbeat(model_id: Optional[str] = Query(None), limit: int = Query(200, ge=1, le=2000)):
+    """Return latest heartbeat records for liveness monitoring."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(row_factory=dict_row)
+
+        if model_id:
+            cursor.execute(
+                """
+                SELECT time, model_id, node_name, alive
+                FROM heartbeat_log
+                WHERE model_id = %s
+                ORDER BY time DESC
+                LIMIT %s;
+                """,
+                (model_id, limit),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT time, model_id, node_name, alive
+                FROM heartbeat_log
+                ORDER BY time DESC
+                LIMIT %s;
+                """,
+                (limit,),
+            )
+
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return [dict(r) for r in rows]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

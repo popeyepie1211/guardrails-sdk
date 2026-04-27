@@ -19,6 +19,7 @@ import argparse
 import logging
 import pandas as pd
 import numpy as np
+import psycopg
 from typing import Dict, Any
 
 # Core Engine Imports
@@ -37,6 +38,12 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+DB_USER = os.getenv('DB_USER', 'postgres')
+DB_PASSWORD = os.getenv('DB_PASSWORD', 'password')
+DB_HOST = os.getenv('DB_HOST', '127.0.0.1')
+DB_PORT = os.getenv('DB_PORT', '5432')
+DB_NAME = os.getenv('DB_NAME', 'postgres')
 
 # ============================================
 # BASELINE COMPUTATION
@@ -227,6 +234,56 @@ def save_baseline(
         json.dump(metadata, f, indent=2)
     logger.info(f"✅ Metadata saved to {metadata_path}")
 
+
+def save_baseline_to_db(
+    model_id: str,
+    model_name: str,
+    domain: str,
+    version: str,
+    baseline: Dict[str, Any],
+    metadata: Dict[str, Any],
+) -> None:
+    """Persist baseline + metadata into production tables."""
+    conn = psycopg.connect(
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT,
+        dbname=DB_NAME
+    )
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO models (model_id, model_name, domain)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (model_id)
+                DO UPDATE SET
+                    model_name = EXCLUDED.model_name,
+                    domain = EXCLUDED.domain,
+                    updated_at = NOW();
+                """,
+                (model_id, model_name, domain),
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO model_baselines (model_id, baseline, metadata, version)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (model_id)
+                DO UPDATE SET
+                    baseline = EXCLUDED.baseline,
+                    metadata = EXCLUDED.metadata,
+                    version = EXCLUDED.version,
+                    updated_at = NOW();
+                """,
+                (model_id, json.dumps(baseline), json.dumps(metadata), version),
+            )
+        conn.commit()
+        logger.info("✅ Baseline and metadata upserted into PostgreSQL")
+    finally:
+        conn.close()
+
 # ============================================
 # CLI
 # ============================================
@@ -287,6 +344,36 @@ def main():
         default=100,
         help="Window size for metric computation"
     )
+    parser.add_argument(
+        "--model_version",
+        default="v1",
+        help="Semantic model version used by worker SHAP pipeline"
+    )
+    parser.add_argument(
+        "--model_name",
+        default=None,
+        help="Human friendly model name (defaults to model_id)"
+    )
+    parser.add_argument(
+        "--model_artifact_path",
+        default=None,
+        help="Path to serialized production model artifact used for SHAP"
+    )
+    parser.add_argument(
+        "--preprocessor_artifact_path",
+        default=None,
+        help="Optional path to serialized preprocessor/pipeline artifact"
+    )
+    parser.add_argument(
+        "--shap_background_path",
+        default=None,
+        help="CSV path used as deterministic SHAP background dataset"
+    )
+    parser.add_argument(
+        "--skip_db_upsert",
+        action="store_true",
+        help="Skip writing baseline/metadata to PostgreSQL"
+    )
     
     args = parser.parse_args()
     
@@ -322,12 +409,32 @@ def main():
         protected_attributes=protected_attrs,
         quasi_identifier_columns=categorical_features
     )
+    metadata["model_version"] = args.model_version
+    if args.model_artifact_path:
+        metadata["model_artifact_path"] = args.model_artifact_path
+    if args.preprocessor_artifact_path:
+        metadata["preprocessor_artifact_path"] = args.preprocessor_artifact_path
+    if args.shap_background_path:
+        metadata["shap_background_path"] = args.shap_background_path
+    metadata["shap_explainer_type"] = metadata.get("shap_explainer_type", "auto")
     
     # Compute baseline
     baseline = compute_baseline(df, metadata, window_size=args.window_size)
     
     # Save
     save_baseline(args.model_id, baseline, metadata, output_dir=args.output_dir)
+
+    if not args.skip_db_upsert:
+        save_baseline_to_db(
+            model_id=args.model_id,
+            model_name=args.model_name or args.model_id,
+            domain=args.domain,
+            version=args.model_version,
+            baseline=baseline,
+            metadata=metadata,
+        )
+    else:
+        logger.warning("⚠️ Skipped DB upsert (--skip_db_upsert enabled)")
     
     logger.info(f"✅ Baseline initialization complete for {args.model_id}")
     logger.info(f"📁 Output directory: {args.output_dir}")

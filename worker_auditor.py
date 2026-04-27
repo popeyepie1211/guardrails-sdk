@@ -29,6 +29,7 @@ import sys
 import pickle
 import pandas as pd
 import psycopg
+from psycopg.rows import dict_row
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Callable
 import redis
@@ -73,6 +74,7 @@ DB_PORT = os.getenv('DB_PORT', '5432')
 DB_NAME = os.getenv('DB_NAME', 'postgres')
 WORKER_TIMEOUT = int(os.getenv('WORKER_TIMEOUT', '30'))
 BATCH_SIZE_LIMIT = int(os.getenv('BATCH_SIZE_LIMIT', '1000'))
+STORE_RAW_EVENTS = os.getenv('STORE_RAW_EVENTS', 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
 
 VITALS_QUEUE = 'vitals_queue'
 DEAD_LETTER_QUEUE = 'vitals_dead_letter'
@@ -422,63 +424,185 @@ def _get_model_bundle(model_id: str, metadata: Dict[str, Any], feature_cols: Lis
     return bundle
 
 # ============================================
-# BASELINE LOADING (Temporary - from JSON)
+# MODEL CONFIG LOADING (DB-backed)
 # ============================================
-def load_baseline(model_id: str) -> Dict[str, Any]:
+def _normalize_json_field(value: Any, field_name: str) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        parsed = json.loads(value)
+        if isinstance(parsed, dict):
+            return parsed
+    raise ValueError(f"{field_name} must be a JSON object")
+
+
+def load_model_config(db_conn: psycopg.Connection, model_id: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    Load baseline for a model.
-    TODO: Replace with DB lookup from model_baselines table.
-    For now, uses hardcoded default or JSON file.
+    Load baseline and metadata for a model from the model_baselines table.
+    This is the production source of truth for worker configuration.
     """
-    baseline_file = f"baselines/{model_id}.json"
-    
-    if os.path.exists(baseline_file):
-        logger.info(f"[INFO] Loading baseline from {baseline_file}")
-        with open(baseline_file, 'r') as f:
-            return json.load(f)
-    
-    # Fallback: hardcoded default
-    logger.warning(f"[WARN] No baseline file found for {model_id}. Using defaults.")
-    return {
-        "baseline_summary": {
-            "gini": {"mean": 0.45, "std": 0.05},
-            "psi": {"mean": 0.02, "std": 0.01},
-            "linf": {"mean": 50000, "std": 10000},
-            "privacy_score": {"mean": 0.90, "std": 0.03},
-            "statistical_parity": {"mean": 0.85, "std": 0.05},
-            "ood_score": {"mean": 0.80, "std": 0.05},
-            "shap_importance": {"mean": 0.50, "std": 0.10},
-        }
+    with db_conn.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT
+                b.baseline,
+                b.metadata,
+                b.version,
+                m.model_name,
+                m.domain AS model_domain
+            FROM model_baselines b
+            LEFT JOIN models m ON m.model_id = b.model_id
+            WHERE b.model_id = %s
+            LIMIT 1;
+            """,
+            (model_id,),
+        )
+        row = cursor.fetchone()
+
+    if not row:
+        raise ValueError(
+            f"No baseline metadata found for model '{model_id}'. "
+            "Register the model in model_baselines before starting the worker."
+        )
+
+    baseline = _normalize_json_field(row["baseline"], "baseline")
+    metadata = _normalize_json_field(row["metadata"], "metadata")
+
+    version = row.get("version")
+    if version:
+        metadata["model_version"] = str(version)
+
+    if row.get("model_name") and not metadata.get("model_name"):
+        metadata["model_name"] = row["model_name"]
+
+    if row.get("model_domain") and not metadata.get("domain"):
+        metadata["domain"] = row["model_domain"]
+
+    return baseline, metadata
+
+
+def enrich_metadata_from_batch(metadata: Dict[str, Any], batch: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge runtime envelope metadata without overriding DB-required config."""
+    result = dict(metadata)
+    batch_meta = batch.get("metadata") if isinstance(batch.get("metadata"), dict) else {}
+    payload = batch.get("payload") if isinstance(batch.get("payload"), list) else []
+    event_meta = payload[0].get("metadata") if payload and isinstance(payload[0], dict) and isinstance(payload[0].get("metadata"), dict) else {}
+
+    merged = {
+        **batch_meta,
+        **event_meta,
     }
 
-def load_metadata(model_id: str) -> Dict[str, Any]:
-    """
-    Load metadata for a model.
-    TODO: Replace with DB lookup from model_baselines table.
-    For now, uses JSON file.
-    """
-    metadata_file = f"baselines/{model_id}_metadata.json"
-    
-    if os.path.exists(metadata_file):
-        logger.info(f"[INFO] Loading metadata from {metadata_file}")
-        with open(metadata_file, 'r') as f:
-            return json.load(f)
-    
-    # Fallback: default finance model
-    logger.warning(f"[WARN] No metadata file found for {model_id}. Using defaults.")
-    return {
-        "domain": "finance",
-        "feature_columns": ["income", "credit_score"],
-        "numerical_features": ["income", "credit_score"],
-        "categorical_features": ["gender"],
-        "protected_attributes": {
-            "type": "categorical",
-            "columns": ["gender"]
-        },
-        "quasi_identifier_columns": ["gender"],
-        "prediction_column": "prediction",
-        "prediction_type": "binary"
-    }
+    if isinstance(merged.get("domain"), str) and merged["domain"].strip():
+        result.setdefault("domain", merged["domain"].strip())
+
+    if isinstance(merged.get("prediction_type"), str) and merged["prediction_type"].strip():
+        result.setdefault("prediction_type", merged["prediction_type"].strip())
+
+    if isinstance(merged.get("model_version"), str) and merged["model_version"].strip():
+        result.setdefault("model_version", merged["model_version"].strip())
+
+    if isinstance(merged.get("node_name"), str) and merged["node_name"].strip():
+        result["node_name"] = merged["node_name"].strip()
+
+    return result
+
+
+def upsert_model_registry(cursor: psycopg.Cursor, model_id: str, metadata: Dict[str, Any]) -> None:
+    model_name = str(metadata.get("model_name") or model_id)
+    domain = str(metadata.get("domain") or "standard")
+    cursor.execute(
+        """
+        INSERT INTO models (model_id, model_name, domain)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (model_id)
+        DO UPDATE SET
+            model_name = EXCLUDED.model_name,
+            domain = EXCLUDED.domain,
+            updated_at = NOW();
+        """,
+        (model_id, model_name, domain),
+    )
+
+
+def persist_shap_summary(
+    cursor: psycopg.Cursor,
+    event_time: datetime,
+    model_id: str,
+    batch_id: str,
+    metrics: Dict[str, Any],
+) -> None:
+    top_features = metrics.get("shap_top_features")
+    if not isinstance(top_features, list) or not top_features:
+        return
+
+    records = []
+    for item in top_features[:5]:
+        name = item.get("name") if isinstance(item, dict) else None
+        weight = item.get("weight") if isinstance(item, dict) else None
+        if isinstance(name, str) and name and isinstance(weight, (int, float)):
+            records.append((event_time, model_id, batch_id, name, float(weight)))
+
+    if records:
+        cursor.executemany(
+            """
+            INSERT INTO shap_summary (time, model_id, batch_id, feature_name, shap_value)
+            VALUES (%s, %s, %s, %s, %s);
+            """,
+            records,
+        )
+
+
+def persist_node_status_history(
+    cursor: psycopg.Cursor,
+    event_time: datetime,
+    model_id: str,
+    batch_id: str,
+    wdag_trace: Dict[str, Any],
+) -> None:
+    records = []
+    for node in wdag_trace.values():
+        if not isinstance(node, dict):
+            continue
+        node_name = node.get("name")
+        status = node.get("status")
+        if isinstance(node_name, str) and isinstance(status, str):
+            records.append((event_time, model_id, batch_id, node_name, status))
+
+    if records:
+        cursor.executemany(
+            """
+            INSERT INTO node_status_history (time, model_id, batch_id, node_name, status)
+            VALUES (%s, %s, %s, %s, %s);
+            """,
+            records,
+        )
+
+
+def persist_heartbeat_log(
+    cursor: psycopg.Cursor,
+    event_time: datetime,
+    model_id: str,
+    wdag_trace: Dict[str, Any],
+) -> None:
+    records = []
+    for node in wdag_trace.values():
+        if not isinstance(node, dict):
+            continue
+        node_name = node.get("name")
+        status = node.get("status")
+        if isinstance(node_name, str):
+            alive = str(status).lower() != "grey"
+            records.append((event_time, model_id, node_name, alive))
+
+    if records:
+        cursor.executemany(
+            """
+            INSERT INTO heartbeat_log (time, model_id, node_name, alive)
+            VALUES (%s, %s, %s, %s);
+            """,
+            records,
+        )
 
 # ============================================
 # SHAP COMPUTATION
@@ -541,7 +665,7 @@ def compute_shap_for_batch(
         }
         top_features = [
             {"name": name, "weight": weight}
-            for name, weight in sorted(importance_map.items(), key=lambda item: item[1], reverse=True)[:8]
+            for name, weight in sorted(importance_map.items(), key=lambda item: item[1], reverse=True)[:5]
         ]
 
         score = float(np.mean(list(importance_map.values()))) if importance_map else 0.0
@@ -597,9 +721,9 @@ def process_batch(
         
         logger.info(f"[INFO] Processing batch {batch_id} (Model: {model_id}, Items: {len(payload)})")
         
-        # 1. Load baseline and metadata
-        baseline = load_baseline(model_id)
-        metadata = load_metadata(model_id)
+        # 1. Load baseline and metadata from DB source of truth
+        baseline, metadata = load_model_config(db_conn, model_id)
+        metadata = enrich_metadata_from_batch(metadata, batch)
 
         # 1.5 SHAP smoke validation (one-time per model version)
         validate_shap_runtime_config(model_id, metadata)
@@ -642,11 +766,15 @@ def process_batch(
         transparency = metrics.get("shap_importance", {}).get("value", 0.45)
         
         # Extract WDAG trace
-        wdag_trace_json = json.dumps(graph.to_dict())
+        wdag_trace_dict = graph.to_dict()
+        wdag_trace_json = json.dumps(wdag_trace_dict)
         metrics_json = json.dumps(metrics)
-        
+
+        event_time = datetime.now()
+
         # 6. Insert into TimescaleDB
         cursor = db_conn.cursor()
+        upsert_model_registry(cursor, model_id, metadata)
         
         insert_query = """
             INSERT INTO model_vitals 
@@ -655,7 +783,7 @@ def process_batch(
         """
         
         record = (
-            datetime.now(),
+            event_time,
             model_id,
             float(fairness),
             float(stability),
@@ -670,6 +798,20 @@ def process_batch(
         )
         
         cursor.execute(insert_query, record)
+
+        persist_shap_summary(cursor, event_time, model_id, batch_id, metrics)
+        persist_node_status_history(cursor, event_time, model_id, batch_id, wdag_trace_dict)
+        persist_heartbeat_log(cursor, event_time, model_id, wdag_trace_dict)
+
+        if STORE_RAW_EVENTS:
+            cursor.execute(
+                """
+                INSERT INTO raw_inference_events (time, model_id, batch_id, payload)
+                VALUES (%s, %s, %s, %s);
+                """,
+                (event_time, model_id, batch_id, json.dumps(payload)),
+            )
+
         db_conn.commit()
         cursor.close()
         
@@ -678,6 +820,7 @@ def process_batch(
         
     except ValueError as e:
         logger.error(f"[ERROR] Validation error in batch: {e}")
+        db_conn.rollback()
         return False
     except psycopg.Error as e:
         logger.error(f"[ERROR] Database error: {e}")
@@ -685,6 +828,7 @@ def process_batch(
         return False
     except Exception as e:
         logger.error(f"[ERROR] Unexpected error processing batch {batch_id}: {e}", exc_info=True)
+        db_conn.rollback()
         return False
 
 # ============================================

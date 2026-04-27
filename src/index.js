@@ -95,10 +95,27 @@ class Guardrail {
     this.captureMethods = ['predict'];
     this.inputAdapter = (args) => args[0] ?? {};
     this.predictionAdapter = defaultPredictionAdapter;
+    this.domain = 'standard';
+    this.predictionType = 'binary';
+    this.nodeName = 'SDK_Intercept';
+    this.modelVersion = 'latest';
+    this.extraMetadata = {};
   }
 
  
-  init({ apiKey, modelId, endpoint, captureMethods = ['predict'], inputAdapter, predictionAdapter }) {
+  init({
+    apiKey,
+    modelId,
+    endpoint,
+    captureMethods = ['predict'],
+    inputAdapter,
+    predictionAdapter,
+    domain = 'standard',
+    predictionType = 'binary',
+    nodeName = 'SDK_Intercept',
+    modelVersion = 'latest',
+    metadata = {}
+  }) {
     this.apiKey = apiKey;
     this.modelId = modelId;
     this.captureMethods = Array.isArray(captureMethods) && captureMethods.length > 0
@@ -106,9 +123,22 @@ class Guardrail {
       : ['predict'];
     this.inputAdapter = typeof inputAdapter === 'function' ? inputAdapter : this.inputAdapter;
     this.predictionAdapter = typeof predictionAdapter === 'function' ? predictionAdapter : this.predictionAdapter;
+    this.domain = typeof domain === 'string' && domain.trim() ? domain.trim() : 'standard';
+    this.predictionType = typeof predictionType === 'string' && predictionType.trim() ? predictionType.trim() : 'binary';
+    this.nodeName = typeof nodeName === 'string' && nodeName.trim() ? nodeName.trim() : 'SDK_Intercept';
+    this.modelVersion = typeof modelVersion === 'string' && modelVersion.trim() ? modelVersion.trim() : 'latest';
+    this.extraMetadata = metadata && typeof metadata === 'object' ? deepClone(metadata) : {};
 
   
-    this.transport = new Transport({ apiKey, modelId, endpoint });
+    this.transport = new Transport({
+      apiKey,
+      modelId,
+      endpoint,
+      domain: this.domain,
+      predictionType: this.predictionType,
+      nodeName: this.nodeName,
+      modelVersion: this.modelVersion
+    });
 
     
     this.buffer = new DataBuffer((batch) => this.transport.sendBatch(batch));
@@ -156,7 +186,12 @@ class Guardrail {
                 inputFeatures: normalizedInput,
                 prediction: normalizedPrediction,
                 metadata: {
-                  method: prop
+                  method: prop,
+                  domain: sdk.domain,
+                  prediction_type: sdk.predictionType,
+                  node_name: sdk.nodeName,
+                  model_version: sdk.modelVersion,
+                  ...deepClone(sdk.extraMetadata)
                 },
                 // Legacy fields retained for backward compatibility with older workers.
                 latency: parseFloat(latency),

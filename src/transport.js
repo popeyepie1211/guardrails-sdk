@@ -6,6 +6,10 @@ export class Transport {
     this.apiKey = config.apiKey;
     this.modelId = config.modelId;
     this.endpoint = config.endpoint || 'https://api.guardrail.ai/v1/ingest';
+    this.domain = config.domain || 'standard';
+    this.predictionType = config.predictionType || 'binary';
+    this.nodeName = config.nodeName || 'SDK_Intercept';
+    this.modelVersion = config.modelVersion || 'latest';
     
     // Create an Axios instance with pre-configured headers
     this.api = axios.create({
@@ -30,6 +34,12 @@ export class Transport {
         modelId: this.modelId,
         sdkVersion: '1.0.0',
         sentAt: new Date().toISOString(),
+        metadata: {
+          domain: this.domain,
+          prediction_type: this.predictionType,
+          node_name: this.nodeName,
+          model_version: this.modelVersion
+        },
         payload: batch
       });
       

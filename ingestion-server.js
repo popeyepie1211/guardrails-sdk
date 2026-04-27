@@ -100,13 +100,36 @@ app.post('/v1/ingest', async (req, res) => {
             });
         }
 
+        const firstEventMeta = (batch.payload[0] && batch.payload[0].metadata && typeof batch.payload[0].metadata === 'object')
+            ? batch.payload[0].metadata
+            : {};
+
+        const envelopeMeta = (batch.metadata && typeof batch.metadata === 'object') ? batch.metadata : {};
+        const normalizedMetadata = {
+            domain: envelopeMeta.domain || firstEventMeta.domain || 'standard',
+            prediction_type: envelopeMeta.prediction_type || firstEventMeta.prediction_type || 'binary',
+            node_name: envelopeMeta.node_name || firstEventMeta.node_name || 'SDK_Intercept',
+            model_version: envelopeMeta.model_version || firstEventMeta.model_version || 'latest'
+        };
+
+        if (!normalizedMetadata.domain || !normalizedMetadata.prediction_type || !normalizedMetadata.node_name) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid metadata: requires domain, prediction_type, and node_name'
+            });
+        }
+
         // Push to Redis queue
         const queueKey = `${VITALS_QUEUE}:${batch.modelId}`;
-        await redisClient.lPush(queueKey, JSON.stringify(batch));
+        await redisClient.lPush(queueKey, JSON.stringify({
+            ...batch,
+            metadata: normalizedMetadata
+        }));
 
         // Also push to unified queue for multi-model workers
         await redisClient.lPush(VITALS_QUEUE, JSON.stringify({
             ...batch,
+            metadata: normalizedMetadata,
             enqueuedAt: new Date().toISOString()
         }));
 
