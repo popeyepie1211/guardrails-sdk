@@ -85,7 +85,7 @@ app.post('/v1/ingest', async (req, res) => {
     try {
         const batch = req.body;
 
-        // Validate batch structure
+       
         if (!batch.batchId || !batch.modelId || !Array.isArray(batch.payload)) {
             return res.status(400).json({
                 status: 'error',

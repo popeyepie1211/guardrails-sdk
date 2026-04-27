@@ -106,6 +106,18 @@ export default function ExecutiveDashboard() {
   const [flowNodes, setFlowNodes] = useState([]);
   const [flowEdges, setFlowEdges] = useState([]);
 
+  const buildShapBars = (apiData) => {
+    const shapMap = apiData?.metrics?.shap_feature_importance;
+    if (!shapMap || typeof shapMap !== 'object' || Array.isArray(shapMap)) {
+      return [];
+    }
+
+    return Object.entries(shapMap)
+      .map(([name, weight]) => ({ name, weight: Number(weight) || 0 }))
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, 8);
+  };
+
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
@@ -125,12 +137,8 @@ export default function ExecutiveDashboard() {
           privacy: (data.privacy * 100).toFixed(1),
           transparency: (data.transparency * 100).toFixed(1),
           latency: 410,
-          shap: [
-            { name: 'Income', weight: 0.45 }, 
-            { name: 'Credit_Score', weight: 0.35 },
-            { name: 'Gender', weight: 0.12 }, 
-            { name: 'Employment', weight: 0.08 }
-          ]
+          shap: buildShapBars(data),
+          shapStatus: data?.metrics?.shap_status || { available: false, reason: 'missing_metrics' }
         };
         
         setMetrics(formattedMetrics);
@@ -218,10 +226,11 @@ export default function ExecutiveDashboard() {
     transparency: metrics?.transparency ?? 81,
     latency: metrics?.latency ?? 410,
     status: metrics?.status ?? 'critical',
-    shap: metrics?.shap ?? [
+    shap: (metrics?.shap && metrics.shap.length > 0) ? metrics.shap : [
       { name: 'Income', weight: 0.45 }, { name: 'Credit_History', weight: 0.35 },
       { name: 'Zip_Code', weight: 0.12 }, { name: 'Employment', weight: 0.08 }
     ],
+    shapStatus: metrics?.shapStatus ?? { available: false, reason: 'not_ready' },
     history: history.length > 0 ? history : [{ time: '00:00:00', psi: 0 }]
   };
 
@@ -304,6 +313,11 @@ export default function ExecutiveDashboard() {
         <Motion.div variants={containerVariants} initial="hidden" whileInView="show" viewport={{ once: true }} className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
            <Motion.div variants={itemVariants}>
               <PurpleFeatureCard title="Transparency Heatmap" description="Live SHAP feature importance distribution." buttonText="Download CSV" className="border-orange-500/40 bg-gradient-to-br from-[#1a0b06]/95 to-[#0a0a0a]/75">
+                {!fallback.shapStatus.available && (
+                  <div className="mb-2 text-xs text-orange-300/80">
+                    SHAP unavailable: {String(fallback.shapStatus.reason || 'unknown')}
+                  </div>
+                )}
                 <div className="h-56 mt-4">
                    <ResponsiveContainer width="100%" height="100%">
                       <BarChart layout="vertical" data={fallback.shap}>

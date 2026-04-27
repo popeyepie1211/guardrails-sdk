@@ -141,7 +141,9 @@ def compute_baseline(
         if ood_values:
             metrics_history["ood_score"].append(np.mean(ood_values))
         
-        # SHAP (simplified - constant for now)
+        # SHAP (now computed dynamically in worker_auditor.py)
+        # Baseline aggregates SHAP results from actual worker batches
+        # For baseline initialization, use placeholder until worker provides real data
         metrics_history["shap_importance"].append(0.5)
         
         # Statistical Parity (if fairness enabled)

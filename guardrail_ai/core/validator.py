@@ -284,3 +284,49 @@ class Validator:
                     raise InputValidationError(
                     "Invalid one-hot encoding: each row must belong to exactly one group."
                 )
+
+    @staticmethod
+    def validate_shap_metadata(metadata: Dict[str, Any]) -> None:
+        """
+        Validate metadata required for production-grade SHAP execution.
+        """
+        if not isinstance(metadata, dict):
+            raise InputValidationError("Metadata must be a dictionary for SHAP validation.")
+
+        required_keys = ["model_artifact_path", "model_version"]
+        for key in required_keys:
+            value = metadata.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise InputValidationError(f"SHAP metadata requires non-empty '{key}'.")
+
+        feature_order = metadata.get("feature_order")
+        feature_columns = metadata.get("feature_columns")
+        features = feature_order if isinstance(feature_order, list) and feature_order else feature_columns
+
+        if not isinstance(features, list) or len(features) == 0:
+            raise InputValidationError(
+                "SHAP metadata requires non-empty 'feature_order' or 'feature_columns'."
+            )
+
+        if not all(isinstance(col, str) and col.strip() for col in features):
+            raise InputValidationError("SHAP feature list must contain non-empty string column names.")
+
+        explainer_type = str(metadata.get("shap_explainer_type", "auto")).lower()
+        valid_explainers = {"auto", "tree", "linear", "kernel"}
+        if explainer_type not in valid_explainers:
+            raise InputValidationError(
+                f"Invalid shap_explainer_type '{explainer_type}'. Allowed: {sorted(valid_explainers)}"
+            )
+
+        background_path = metadata.get("shap_background_path")
+        background_samples = metadata.get("shap_background_samples")
+        if not background_path and not background_samples:
+            raise InputValidationError(
+                "SHAP metadata requires either 'shap_background_path' or 'shap_background_samples'."
+            )
+
+        if background_samples is not None and not isinstance(background_samples, list):
+            raise InputValidationError("'shap_background_samples' must be a list when provided.")
+
+        if background_samples is not None and len(background_samples) == 0:
+            raise InputValidationError("'shap_background_samples' cannot be empty when provided.")

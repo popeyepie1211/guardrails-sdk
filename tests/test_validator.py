@@ -240,3 +240,48 @@ def test_invalid_protected_type():
             domain="standard"
 
         )
+
+
+# -----------------------------------
+# SHAP Metadata Validation
+# -----------------------------------
+
+def valid_shap_metadata():
+    return {
+        "model_artifact_path": "models/loan_model.pkl",
+        "model_version": "v1",
+        "feature_columns": ["feature1", "feature2"],
+        "shap_explainer_type": "tree",
+        "shap_background_samples": [
+            {"feature1": 1, "feature2": 4},
+            {"feature1": 2, "feature2": 5},
+        ],
+    }
+
+
+def test_valid_shap_metadata_with_samples():
+    Validator.validate_shap_metadata(valid_shap_metadata())
+
+
+def test_shap_metadata_missing_model_artifact_path():
+    metadata = valid_shap_metadata()
+    metadata.pop("model_artifact_path")
+
+    with pytest.raises(InputValidationError):
+        Validator.validate_shap_metadata(metadata)
+
+
+def test_shap_metadata_invalid_explainer_type():
+    metadata = valid_shap_metadata()
+    metadata["shap_explainer_type"] = "bad_explainer"
+
+    with pytest.raises(InputValidationError):
+        Validator.validate_shap_metadata(metadata)
+
+
+def test_shap_metadata_requires_background_source():
+    metadata = valid_shap_metadata()
+    metadata.pop("shap_background_samples")
+
+    with pytest.raises(InputValidationError):
+        Validator.validate_shap_metadata(metadata)

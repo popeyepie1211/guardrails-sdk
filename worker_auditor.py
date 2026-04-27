@@ -26,13 +26,16 @@ import json
 import os
 import logging
 import sys
+import pickle
 import pandas as pd
 import psycopg
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 import redis
 from redis import Redis
 import time
+import numpy as np
+import shap
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(errors="replace")
@@ -41,6 +44,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 # Core Engine Imports
 from guardrail_ai.core.vitals_engine import VitalsEngine
+from guardrail_ai.core.validator import Validator
 from guardrail_ai.wdag.node import Node
 from guardrail_ai.wdag.graph import WDAG
 from guardrail_ai.wdag.executor import WDAGExecutor
@@ -76,10 +80,9 @@ DEAD_LETTER_QUEUE = 'vitals_dead_letter'
 # ============================================
 # GLOBAL STATE
 # ============================================
-# Cache engines and graphs by model_id to avoid repeated instantiation
-engine_cache: Dict[str, VitalsEngine] = {}
-graph_cache: Dict[str, WDAG] = {}
-executor_cache: Dict[str, WDAGExecutor] = {}
+# Cache real model artifacts and SHAP explainers by model_id + version.
+model_bundle_cache: Dict[str, Dict[str, Any]] = {}
+shap_validation_cache: Dict[str, bool] = {}
 
 
 def to_snake_case(name: str) -> str:
@@ -233,12 +236,9 @@ def build_engine_and_graph(
 ) -> tuple:
     """
     Build VitalsEngine and WDAG graph for a model.
-    Results are cached by model_id.
+    Engine is intentionally created per batch because metadata contains
+    batch-scoped SHAP values and summaries.
     """
-    if model_id in engine_cache:
-        logger.debug(f"[OK] Using cached engine for {model_id}")
-        return engine_cache[model_id], graph_cache[model_id], executor_cache[model_id]
-    
     # Create engine
     engine = VitalsEngine(baseline=baseline, metadata=metadata)
     
@@ -257,14 +257,169 @@ def build_engine_and_graph(
     
     # Create executor
     executor = WDAGExecutor(graph, engine)
-    
-    # Cache all three
-    engine_cache[model_id] = engine
-    graph_cache[model_id] = graph
-    executor_cache[model_id] = executor
-    
-    logger.info(f"[OK] Built engine and graph for {model_id}")
+
+    logger.debug(f"[OK] Built engine and graph for {model_id}")
     return engine, graph, executor
+
+
+def _artifact_cache_key(model_id: str, metadata: Dict[str, Any]) -> str:
+    version = str(metadata.get("model_version", "latest"))
+    return f"{model_id}:{version}"
+
+
+def validate_shap_runtime_config(model_id: str, metadata: Dict[str, Any]) -> None:
+    """
+    One-time runtime smoke check for SHAP config and artifacts per model version.
+    Fails fast with clear messages to prevent silent explainability drift.
+    """
+    cache_key = _artifact_cache_key(model_id, metadata)
+    if shap_validation_cache.get(cache_key):
+        return
+
+    Validator.validate_shap_metadata(metadata)
+
+    model_path = metadata.get("model_artifact_path")
+    if not os.path.exists(model_path):
+        raise ValueError(f"model_artifact_path not found: {model_path}")
+
+    preprocessor_path = metadata.get("preprocessor_artifact_path")
+    if preprocessor_path and not os.path.exists(preprocessor_path):
+        raise ValueError(f"preprocessor_artifact_path not found: {preprocessor_path}")
+
+    background_path = metadata.get("shap_background_path")
+    if background_path and not os.path.exists(background_path):
+        raise ValueError(f"shap_background_path not found: {background_path}")
+
+    shap_validation_cache[cache_key] = True
+    logger.info(f"[OK] SHAP runtime config validated for {cache_key}")
+
+
+def _load_artifact(path: str) -> Any:
+    if not path:
+        raise ValueError("Artifact path is empty")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Artifact not found at {path}")
+
+    # Try joblib first, then fallback to pickle for generic serialized objects.
+    try:
+        import joblib
+        return joblib.load(path)
+    except Exception:
+        with open(path, "rb") as f:
+            return pickle.load(f)
+
+
+def _prepare_feature_frame(df: pd.DataFrame, metadata: Dict[str, Any]) -> pd.DataFrame:
+    feature_order = metadata.get("feature_order") or metadata.get("feature_columns") or []
+    if not feature_order:
+        raise ValueError("metadata.feature_columns or metadata.feature_order is required for SHAP")
+
+    missing = [col for col in feature_order if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing SHAP feature columns: {missing}")
+
+    return df[feature_order].copy()
+
+
+def _load_background_frame(feature_cols: List[str], metadata: Dict[str, Any]) -> pd.DataFrame:
+    bg_path = metadata.get("shap_background_path")
+    bg_rows = int(metadata.get("shap_background_rows", 200))
+
+    if bg_path:
+        if not os.path.exists(bg_path):
+            raise FileNotFoundError(f"shap_background_path not found: {bg_path}")
+        bg_df = pd.read_csv(bg_path)
+        missing = [col for col in feature_cols if col not in bg_df.columns]
+        if missing:
+            raise ValueError(f"Background data missing required columns: {missing}")
+        return bg_df[feature_cols].head(bg_rows)
+
+    # Fall back to static samples in metadata if provided.
+    samples = metadata.get("shap_background_samples")
+    if isinstance(samples, list) and samples:
+        bg_df = pd.DataFrame(samples)
+        missing = [col for col in feature_cols if col not in bg_df.columns]
+        if missing:
+            raise ValueError(f"shap_background_samples missing required columns: {missing}")
+        return bg_df[feature_cols].head(bg_rows)
+
+    raise ValueError("SHAP requires shap_background_path or shap_background_samples in metadata")
+
+
+def _build_prediction_function(
+    model: Any,
+    preprocessor: Optional[Any],
+    feature_cols: List[str],
+    expect_2d_output: bool = False,
+) -> Callable[[np.ndarray], np.ndarray]:
+    def _predict_internal(raw_array: np.ndarray) -> np.ndarray:
+        frame = pd.DataFrame(raw_array, columns=feature_cols)
+        transformed = preprocessor.transform(frame) if preprocessor is not None else frame.values
+
+        if hasattr(model, "predict_proba"):
+            proba = model.predict_proba(transformed)
+            if getattr(proba, "ndim", 1) == 2 and proba.shape[1] > 1:
+                out = proba[:, 1]
+            else:
+                out = np.ravel(proba)
+        elif hasattr(model, "decision_function"):
+            out = model.decision_function(transformed)
+        else:
+            out = model.predict(transformed)
+
+        out = np.asarray(out)
+        if expect_2d_output and out.ndim == 1:
+            return out.reshape(-1, 1)
+        return out
+
+    return _predict_internal
+
+
+def _get_model_bundle(model_id: str, metadata: Dict[str, Any], feature_cols: List[str]) -> Dict[str, Any]:
+    cache_key = _artifact_cache_key(model_id, metadata)
+    if cache_key in model_bundle_cache:
+        return model_bundle_cache[cache_key]
+
+    model_path = metadata.get("model_artifact_path")
+    if not model_path:
+        raise ValueError("metadata.model_artifact_path is required for production SHAP")
+
+    preprocessor_path = metadata.get("preprocessor_artifact_path")
+    explainer_type = str(metadata.get("shap_explainer_type", "auto")).lower()
+
+    model = _load_artifact(model_path)
+    preprocessor = _load_artifact(preprocessor_path) if preprocessor_path else None
+
+    background_df = _load_background_frame(feature_cols, metadata)
+    background_array = background_df.values
+    transformed_background = (
+        preprocessor.transform(background_df) if preprocessor is not None else background_array
+    )
+
+    predict_fn = _build_prediction_function(model, preprocessor, feature_cols)
+
+    if explainer_type == "tree":
+        explainer = shap.TreeExplainer(model, data=transformed_background)
+    elif explainer_type == "linear":
+        explainer = shap.LinearExplainer(model, transformed_background)
+    elif explainer_type == "kernel":
+        explainer = shap.KernelExplainer(predict_fn, background_array)
+    else:
+        explainer = shap.Explainer(predict_fn, background_array)
+
+    bundle = {
+        "cache_key": cache_key,
+        "model": model,
+        "preprocessor": preprocessor,
+        "predict_fn": predict_fn,
+        "explainer": explainer,
+        "feature_cols": feature_cols,
+        "model_version": str(metadata.get("model_version", "latest")),
+        "explainer_type": explainer_type,
+    }
+    model_bundle_cache[cache_key] = bundle
+    logger.info(f"[OK] Loaded model artifact and SHAP explainer for {cache_key}")
+    return bundle
 
 # ============================================
 # BASELINE LOADING (Temporary - from JSON)
@@ -326,6 +481,100 @@ def load_metadata(model_id: str) -> Dict[str, Any]:
     }
 
 # ============================================
+# SHAP COMPUTATION
+# ============================================
+def compute_shap_for_batch(
+    df: pd.DataFrame,
+    metadata: Dict[str, Any],
+    model_id: str
+) -> Dict[str, Any]:
+    """
+    Compute SHAP values using the real production model artifact.
+    Returns batch scalar score, per-feature summary, and raw values for engine usage.
+    """
+    feature_cols = metadata.get("feature_order") or metadata.get("feature_columns") or []
+    if not feature_cols:
+        return {
+            "available": False,
+            "reason": "missing_feature_columns",
+            "shap_values": None,
+            "score": 0.0,
+            "feature_importance": {},
+            "top_features": [],
+            "model_version": str(metadata.get("model_version", "unknown")),
+            "explainer_type": str(metadata.get("shap_explainer_type", "unknown")),
+        }
+
+    try:
+        X_df = _prepare_feature_frame(df, metadata)
+        bundle = _get_model_bundle(model_id, metadata, feature_cols)
+        explainer = bundle["explainer"]
+        predict_fn = bundle["predict_fn"]
+        explainer_type = bundle["explainer_type"]
+
+        if explainer_type == "tree" and bundle.get("preprocessor") is not None:
+            X_eval = bundle["preprocessor"].transform(X_df)
+            raw_shap = explainer.shap_values(X_eval)
+        elif explainer_type == "tree":
+            raw_shap = explainer.shap_values(X_df.values)
+        elif explainer_type == "linear":
+            X_eval = bundle["preprocessor"].transform(X_df) if bundle.get("preprocessor") is not None else X_df.values
+            raw_shap = explainer.shap_values(X_eval)
+        elif explainer_type == "kernel":
+            raw_shap = explainer.shap_values(X_df.values)
+        else:
+            raw_shap = explainer(X_df.values)
+            raw_shap = raw_shap.values if hasattr(raw_shap, "values") else raw_shap
+
+        if isinstance(raw_shap, list):
+            shap_values = np.mean([np.abs(np.asarray(v)) for v in raw_shap], axis=0)
+        else:
+            shap_values = np.abs(np.asarray(raw_shap))
+
+        if shap_values.ndim == 1:
+            shap_values = shap_values.reshape(-1, 1)
+
+        mean_abs = np.mean(shap_values, axis=0)
+        importance_map = {
+            feature_cols[i]: float(mean_abs[i])
+            for i in range(min(len(feature_cols), len(mean_abs)))
+        }
+        top_features = [
+            {"name": name, "weight": weight}
+            for name, weight in sorted(importance_map.items(), key=lambda item: item[1], reverse=True)[:8]
+        ]
+
+        score = float(np.mean(list(importance_map.values()))) if importance_map else 0.0
+        logger.info(
+            f"[OK] Computed SHAP from real model for {model_id} "
+            f"(version={bundle['model_version']}, features={len(importance_map)})"
+        )
+
+        return {
+            "available": True,
+            "reason": "ok",
+            "shap_values": shap_values,
+            "score": score,
+            "feature_importance": importance_map,
+            "top_features": top_features,
+            "model_version": bundle["model_version"],
+            "explainer_type": bundle["explainer_type"],
+        }
+
+    except Exception as e:
+        logger.error(f"[ERROR] SHAP computation unavailable for {model_id}: {e}")
+        return {
+            "available": False,
+            "reason": str(e),
+            "shap_values": None,
+            "score": 0.0,
+            "feature_importance": {},
+            "top_features": [],
+            "model_version": str(metadata.get("model_version", "unknown")),
+            "explainer_type": str(metadata.get("shap_explainer_type", "unknown")),
+        }
+
+# ============================================
 # BATCH PROCESSING
 # ============================================
 def process_batch(
@@ -351,13 +600,21 @@ def process_batch(
         # 1. Load baseline and metadata
         baseline = load_baseline(model_id)
         metadata = load_metadata(model_id)
+
+        # 1.5 SHAP smoke validation (one-time per model version)
+        validate_shap_runtime_config(model_id, metadata)
         
         # 2. Transform payload to DataFrame
         df = transform_payload_to_dataframe(payload, metadata)
         logger.debug(f"[OK] Transformed {len(df)} rows into DataFrame")
         
+        # 2.5. COMPUTE SHAP FROM REAL MODEL ARTIFACT
+        shap_result = compute_shap_for_batch(df, metadata, model_id)
+        metadata_with_shap = dict(metadata)
+        metadata_with_shap["shap_values"] = shap_result.get("shap_values")
+        
         # 3. Build or fetch engine and graph
-        engine, graph, executor = build_engine_and_graph(model_id, baseline, metadata)
+        engine, graph, executor = build_engine_and_graph(model_id, baseline, metadata_with_shap)
         
         # 4. Execute WDAG
         results = executor.run("Data_Stream", df)
@@ -366,13 +623,23 @@ def process_batch(
         # 5. Extract metrics and vitals
         metrics = results.get("metrics", {})
         overall_status = results.get("status", "normal")
+
+        # Attach structured SHAP details for API/dashboard consumption.
+        metrics["shap_feature_importance"] = shap_result.get("feature_importance", {})
+        metrics["shap_top_features"] = shap_result.get("top_features", [])
+        metrics["shap_status"] = {
+            "available": shap_result.get("available", False),
+            "reason": shap_result.get("reason", "unknown"),
+            "model_version": shap_result.get("model_version", "unknown"),
+            "explainer_type": shap_result.get("explainer_type", "unknown"),
+        }
         
         # Normalize the five vitals with fallbacks
         fairness = metrics.get("statistical_parity", {}).get("value", 0.85)
         stability = 1 - metrics.get("psi", {}).get("value", 0.08)
         security = 0.68 if overall_status != "normal" else 0.95
         privacy = metrics.get("privacy_score", {}).get("value", 0.90)
-        transparency = metrics.get("gini", {}).get("value", 0.45)
+        transparency = metrics.get("shap_importance", {}).get("value", 0.45)
         
         # Extract WDAG trace
         wdag_trace_json = json.dumps(graph.to_dict())
