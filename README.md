@@ -1,54 +1,61 @@
 ## Installation
 
-Clone the repository and install dependencies.
+Install the SDK from npm:
 
 ```bash
-git clone https://github.com/popeyepie1211/guardrails-sdk.git
-cd guardrails-sdk
-
-pip install -r requirements.txt
-pip install -e .
+npm install guardrails-sdk
 ```
 
-* `pip install -r requirements.txt` installs all required external dependencies.
-* `pip install -e .` installs the **guardrail_ai package in editable mode**, allowing local development and testing.
+## Quick Start
 
----
+Instrument your ML model with Guardrails to capture predictions and vitals:
 
-## Running Tests
+```javascript
+import Guardrail from 'guardrails-sdk';
 
-All tests are located inside the `tests/` directory.
+// Initialize with your API key (obtained from Guardrails dashboard)
+Guardrail.init({
+  apiKey: 'your-api-key',
+  modelId: 'your-model-id',
+  endpoint: 'https://api.guardrail.ai/v1/ingest', // Managed Guardrails backend
+  domain: 'lending',
+  predictionType: 'binary',
+  nodeName: 'risk_classifier'
+});
 
-Run the test suite from the **project root directory** (same folder containing `pyproject.toml`):
+// Wrap your model's predict method
+const model = Guardrail.wrap({
+  predict: async (input) => {
+    // Your ML model logic here
+    return { score: 0.87, label: 'approved' };
+  }
+});
 
-```bash
-pytest
+// Use your model—predictions are automatically captured
+const result = await model.predict({ amount: 5000, credit_score: 720 });
+console.log(result);
 ```
 
-or with verbose output:
+## Configuration
 
-```bash
-pytest -v
-```
+- `apiKey`: Your authentication key from the Guardrails dashboard.
+- `modelId`: Unique identifier for your model.
+- `endpoint`: Ingestion endpoint. Defaults to `https://api.guardrail.ai/v1/ingest` (managed service).
+- `domain`: Model domain (e.g., `lending`, `fraud`, `recommendation`).
+- `predictionType`: Either `binary` or `multiclass`.
+- `nodeName`: Name of the decision node being monitored.
 
-This will automatically discover and run all tests in the `tests/` folder.
+## Architecture
 
----
-## TimescaleDB Config
- 1. Start TimescaleDB using Docker
-Run the following command to start a TimescaleDB container:
+Guardrails uses a **managed SaaS backend model**:
 
-```bash
-docker run -d \
---name timescale-guardrail \
--p 5432:5432 \
--e POSTGRES_PASSWORD=password \
-timescale/timescaledb:latest-pg15
-```
-2. Connect to PostgreSQL
-   ```bash
-   docker exec -it timescale-guardrail psql -U postgres
-   ```
+- **SDK (npm package)**: Lightweight client that intercepts model predictions and sends telemetry.
+- **Ingestion Service**: Hosted centrally; receives prediction batches and queues processing.
+- **Worker**: Computes SHAP explainability and vitals; persists to TimescaleDB.
+- **API**: Serves vitals and SHAP history via REST endpoints.
+- **Dashboard**: Visualizes model performance and explainability.
+
+You only need to install the SDK. Everything else runs on Guardrails' managed infrastructure.
    
 
 
