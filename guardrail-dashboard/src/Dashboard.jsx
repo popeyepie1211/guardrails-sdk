@@ -121,7 +121,7 @@ export default function ExecutiveDashboard() {
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        const response = await fetch('http://localhost:8000/api/vitals/latest');
+        const response = await fetch('http://localhost:8001/api/vitals/latest');
         if (!response.ok) throw new Error('Network response was not ok');
         
         const data = await response.json();
