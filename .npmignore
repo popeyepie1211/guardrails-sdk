@@ -1,0 +1,23 @@
+# Exclude everything except dist/ and README.md
+node_modules/
+tests/
+test/
+guardrail-dashboard/
+worker_auditor.py
+ingestion-server.js
+dbapi.py
+setup_database.py
+cert_artifacts/
+.baselines/
+.env
+.env.*
+.DS_Store
+docker-compose.yml
+.vscode/
+*.log
+scripts/
+Papers-ppt/
+public/
+src/**
+!dist/
+!README.md

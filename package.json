@@ -3,12 +3,23 @@
   "version": "1.0.0",
   "description": "",
   "type": "module",
-  "main": "src/index.js",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "types": "",
   "scripts": {
     "start:ingestion": "node ingestion-server.js",
     "dev:ingestion": "nodemon ingestion-server.js",
     "test:mock": "node test/mock-model.js",
-    "test": "node test/mock-model.js"
+    "test": "node test/mock-model.js",
+    "build": "esbuild src/index.js --bundle --format=esm --outfile=dist/index.mjs --sourcemap && esbuild src/index.js --bundle --platform=node --format=cjs --outfile=dist/index.cjs --sourcemap",
+    "prepublishOnly": "npm test && npm run build",
+    "prepare": "npm run build"
   },
   "keywords": [],
   "author": "",
@@ -22,4 +33,13 @@
     "redis": "^5.11.0",
     "uuid": "^9.0.0"
   }
+  ,
+  "devDependencies": {
+    "esbuild": "^0.18.21",
+    "nodemon": "^3.0.1"
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ]
 }
