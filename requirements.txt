@@ -15,3 +15,4 @@ psycopg[binary]==3.2.13
 redis==5.0.1
 python-dotenv==1.0.0
 shap>=0.45.0
+scikit-learn>=1.7.0

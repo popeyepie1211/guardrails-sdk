@@ -655,6 +655,11 @@ def compute_shap_for_batch(
         else:
             shap_values = np.abs(np.asarray(raw_shap))
 
+        # Handle multiclass outputs: shap may return a 3D array (n_samples, n_features, n_classes)
+        # Reduce across the class axis by taking the mean absolute contribution per feature.
+        if shap_values.ndim == 3:
+            shap_values = np.mean(shap_values, axis=2)
+
         if shap_values.ndim == 1:
             shap_values = shap_values.reshape(-1, 1)
 
