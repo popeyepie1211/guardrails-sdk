@@ -12,6 +12,9 @@ import AnimatedWaveCard from './AnimatedWaveCard';
 import CyberBackground from './CyberBackground';
 import PurpleFeatureCard from './PurpleFeatureCard';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const MODEL_ID = import.meta.env.VITE_MODEL_ID || 'hf_distilbert_burst_demo';
+
 // --- NEW LOCAL COMPONENT: TypewriterEffect ---
 const TypewriterEffect = ({ text }) => {
   const characters = text.split("");
@@ -121,7 +124,7 @@ export default function ExecutiveDashboard() {
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        const response = await fetch('http://localhost:8001/api/vitals/latest');
+        const response = await fetch(`${API_BASE_URL}/api/vitals/latest?model_id=${encodeURIComponent(MODEL_ID)}`);
         if (!response.ok) throw new Error('Network response was not ok');
         
         const data = await response.json();

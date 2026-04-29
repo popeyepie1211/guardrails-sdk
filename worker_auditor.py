@@ -114,6 +114,36 @@ def resolve_feature_value(features: Dict[str, Any], feature_name: str) -> Any:
     return None
 
 
+def resolve_batch_feature_value(item: Dict[str, Any], features: Dict[str, Any], feature_name: str) -> Any:
+    resolved = resolve_feature_value(features, feature_name)
+    if resolved is not None:
+        return resolved
+
+    output = item.get("output")
+    if isinstance(output, dict):
+        resolved = resolve_feature_value(output, feature_name)
+        if resolved is not None:
+            return resolved
+
+        if feature_name.lower() in {"score", "confidence", "probability"}:
+            for key in ["score", "confidence", "probability"]:
+                if isinstance(output.get(key), (int, float)):
+                    return output[key]
+
+    prediction = item.get("prediction")
+    if isinstance(prediction, dict):
+        resolved = resolve_feature_value(prediction, feature_name)
+        if resolved is not None:
+            return resolved
+
+        if feature_name.lower() in {"score", "confidence", "probability"}:
+            for key in ["value", "score", "confidence", "probability"]:
+                if isinstance(prediction.get(key), (int, float)):
+                    return prediction[key]
+
+    return None
+
+
 def extract_prediction_value(item: Dict[str, Any]) -> Any:
     prediction = item.get("prediction")
     if isinstance(prediction, dict):
@@ -201,7 +231,7 @@ def transform_payload_to_dataframe(
             # Normalize required feature keys to metadata names.
             for feature_name in metadata.get("feature_columns", []):
                 if feature_name not in row:
-                    resolved = resolve_feature_value(features, feature_name)
+                    resolved = resolve_batch_feature_value(item, features, feature_name)
                     if resolved is not None:
                         row[feature_name] = resolved
 
@@ -278,9 +308,14 @@ def validate_shap_runtime_config(model_id: str, metadata: Dict[str, Any]) -> Non
     if shap_validation_cache.get(cache_key):
         return
 
+    model_path = metadata.get("model_artifact_path")
+    if not model_path:
+        logger.info(f"[INFO] SHAP runtime validation skipped for {cache_key}: no model_artifact_path configured")
+        shap_validation_cache[cache_key] = True
+        return
+
     Validator.validate_shap_metadata(metadata)
 
-    model_path = metadata.get("model_artifact_path")
     if not os.path.exists(model_path):
         raise ValueError(f"model_artifact_path not found: {model_path}")
 
