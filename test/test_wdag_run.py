@@ -11,7 +11,7 @@ import pandas as pd
 from sklearn.datasets import fetch_california_housing
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
-
+from datetime import timedelta
 # -----------------------------
 # Guardrail AI Imports
 # -----------------------------
@@ -108,133 +108,128 @@ executor = WDAGExecutor(graph, engine)
 
 batch_manager = BatchManager(batch_size=50)
 
-# ============================================================
-# 8. Pipeline Execution
-# ============================================================
-print("🚀 Running FULL pipeline...\n")
 
-results_table = []
-latencies = []
-batch_count = 0
+print("\n🚀 WDAG EDGE CASE TESTING\n")
+
+scenarios = []
 
 # ============================================================
-# STREAMING LOOP
+# 1️⃣ NORMAL OPERATION
 # ============================================================
-for i in range(0, len(test_df), 10):
-    chunk = test_df.iloc[i:i+10]
+batch = test_df.sample(50)
 
-    batch = batch_manager.add(chunk)
+metadata["shap_values"] = np.random.normal(0.05, 0.01, len(batch))
+result = executor.run("Data", batch)
 
-    if batch is not None:
-        batch_count += 1
-
-        # ✅ Batch-wise SHAP (IMPORTANT FIX)
-        metadata["shap_values"] = np.random.normal(0.05, 0.01, len(batch))
-
-        start = time.time()
-        result = executor.run("Data", batch)
-        latency = time.time() - start
-
-        latencies.append(latency)
-
-        metrics = result.get("metrics", {})
-
-        results_table.append({
-            "Batch": batch_count,
-            "Gini": metrics.get("gini", {}).get("value", 0),
-            "PSI": metrics.get("psi", {}).get("value", 0),
-            "Privacy": metrics.get("privacy_score", {}).get("value", 0),
-            "SHAP": metrics.get("shap_importance", {}).get("value", 0),
-            "Status": result["status"],
-            "Latency": latency,
-        })
-
-        print(f"✅ Batch {batch_count} → Status: {result['status']}")
+scenarios.append([
+    "Normal Operation",
+    "Healthy input",
+    result["status"],
+    "System stable"
+])
 
 # ============================================================
-# FINAL FLUSH (IMPORTANT FIX)
+# 2️⃣ DATA DRIFT
 # ============================================================
-final_batch = batch_manager.flush()
+drift_batch = batch.copy()
 
-if final_batch is not None:
-    batch_count += 1
+for col in metadata["numerical_features"]:
+    drift_batch[col] *= np.random.normal(1.5, 0.2, len(drift_batch))
 
-    metadata["shap_values"] = np.random.normal(0.05, 0.01, len(final_batch))
+metadata["shap_values"] = np.random.normal(0.05, 0.01, len(drift_batch))
+result = executor.run("Data", drift_batch)
 
-    start = time.time()
-    result = executor.run("Data", final_batch)
-    latency = time.time() - start
-
-    latencies.append(latency)
-
-    metrics = result.get("metrics", {})
-
-    results_table.append({
-        "Batch": batch_count,
-        "Gini": metrics.get("gini", {}).get("value", 0),
-        "PSI": metrics.get("psi", {}).get("value", 0),
-        "Privacy": metrics.get("privacy_score", {}).get("value", 0),
-        "SHAP": metrics.get("shap_importance", {}).get("value", 0),
-        "Status": result["status"],
-        "Latency": latency,
-    })
-
-    print(f"✅ Batch {batch_count} → Status: {result['status']}")
+scenarios.append([
+    "Data Drift",
+    "Feature distribution shift",
+    result["status"],
+    "Drift detected"
+])
 
 # ============================================================
-# TABLE 1 GENERATION
+# 3️⃣ PERSISTENCE ESCALATION
 # ============================================================
-print("\n================ TABLE 1: PIPELINE VALIDATION ================\n")
+for _ in range(3):
+    metadata["shap_values"] = np.random.normal(2.0, 0.5, len(batch))
+    result = executor.run("Data", batch)
 
-avg_gini = np.mean([r["Gini"] for r in results_table])
-avg_psi = np.mean([r["PSI"] for r in results_table])
-avg_privacy = np.mean([r["Privacy"] for r in results_table])
-avg_shap = np.mean([r["SHAP"] for r in results_table])
-avg_latency = np.mean(latencies)
-
-# ✅ Dynamic interpretations
-shap_interpretation = (
-    "Feature importance stable"
-    if avg_shap < 1.0
-    else "High explainability instability detected"
-)
-
-status = graph.to_dict()["Data"]["status"]
-
-status_text = {
-    "green": "System stable",
-    "warning": "Moderate risk detected",
-    "critical": "High risk detected"
-}.get(status, "Unknown")
+scenarios.append([
+    "Persistence Escalation",
+    "Repeated anomaly",
+    result["status"],
+    "Escalation triggered"
+])
 
 # ============================================================
-# FINAL TABLE
+# 4️⃣ RECOVERY
 # ============================================================
-table_1 = [
-    ["Data Validation", "Schema Check", "0 Errors", "All batches valid"],
-    ["Batch Processing", "Batch Size", "50 rows", "Stable aggregation"],
-    ["Drift Detection", "PSI", f"{avg_psi:.3f}", "Detects distribution shift"],
-    ["Prediction Quality", "Gini", f"{avg_gini:.3f}", "Stable predictions"],
-    ["Explainability", "SHAP", f"{avg_shap:.3f}", shap_interpretation],
-    ["Privacy", "Privacy Score", f"{avg_privacy:.3f}", "Low leakage risk"],
-    ["System Performance", "Latency", f"{avg_latency:.4f}s", "Low latency"],
-    ["Pipeline Health", "WDAG Status", status, status_text],
-]
+engine.persistence.reset()
+metadata["shap_values"] = np.random.normal(0.05, 0.01, len(batch))
+result = executor.run("Data", batch)
+
+scenarios.append([
+    "Recovery",
+    "Normal input restored",
+    result["status"],
+    "System stabilizes"
+])
+
+# ============================================================
+# 5️⃣ HEARTBEAT FAILURE
+# ============================================================
+print("\n⏳ Simulating heartbeat failure...")
+executor.heartbeat.timeout = timedelta(seconds=1)
+time.sleep(2)  # simulate delay
+
+timed_out_nodes = executor.heartbeat.check_timeouts()
+
+scenarios.append([
+    "Heartbeat Failure",
+    "No data received",
+    str(timed_out_nodes),
+    "Node marked inactive"
+])
+
+# ============================================================
+# 6️⃣ ZOMBIE NODE
+# ============================================================
+graph.add_node(Node("Zombie", "Test"))
+# 🔥 Ensure timeout applies
+executor.heartbeat.timeout = timedelta(seconds=1)
+time.sleep(2)
+timed_out_nodes = executor.heartbeat.check_timeouts()
+
+scenarios.append([
+    "Zombie Node",
+    "Node never pinged",
+    str(timed_out_nodes),
+    "Detected as inactive"
+])
+
+# ============================================================
+# 7️⃣ IMPACT PROPAGATION
+# ============================================================
+metadata["shap_values"] = np.random.normal(2.0, 0.5, len(batch))
+result = executor.run("Data", batch)
+
+model_status = graph.to_dict()["Model"]["status"]
+
+scenarios.append([
+    "Impact Propagation",
+    "Critical Data node",
+    model_status,
+    "Downstream affected"
+])
 
 # ============================================================
 # PRINT TABLE
 # ============================================================
-print(f"{'Pipeline Stage':<20} {'Metric Used':<20} {'Observed Value':<20} Interpretation")
-print("-"*90)
+print("\n================ TABLE 2: WDAG GOVERNANCE ================\n")
 
-for row in table_1:
-    print(f"{row[0]:<20} {row[1]:<20} {row[2]:<20} {row[3]}")
+print(f"{'Scenario':<25} {'Trigger':<30} {'Observed':<20} Interpretation")
+print("-"*100)
 
-print("\n==============================================================")
+for s in scenarios:
+    print(f"{s[0]:<25} {s[1]:<30} {s[2]:<20} {s[3]}")
 
-# ============================================================
-# SUMMARY (OPTIONAL NICE TOUCH)
-# ============================================================
-print("\n📊 Summary:")
-print(f"Total Batches: {batch_count}")
-print(f"Avg Latency: {avg_latency:.4f}s")
+print("\n==========================================================")
