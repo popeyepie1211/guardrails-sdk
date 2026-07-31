@@ -365,6 +365,168 @@ def get_statistics(model_id: Optional[str] = Query(None), hours: int = Query(24)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def _parse_governance_jsonb(record: dict) -> dict:
+    """Parse JSONB columns that psycopg may return as strings."""
+    for col in ("decision_json", "report_json", "wdag_status_json", "metrics_json"):
+        if isinstance(record.get(col), str):
+            try:
+                record[col] = json.loads(record[col])
+            except (json.JSONDecodeError, TypeError):
+                pass
+    return record
+
+_GOVERNANCE_COLUMNS = (
+    "time, model_id, domain, environment, batch_id, "
+    "diagnosis, severity, confidence, recommended_action, verdict, "
+    "governance_health, decision_json, report_json, wdag_status_json, metrics_json"
+)
+
+@app.get("/api/governance/latest")
+def get_latest_governance(model_id: Optional[str] = Query(None)):
+    """
+    Get latest governance decision record.
+    If model_id provided, get latest for that model.
+    Otherwise, get absolute latest.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(row_factory=dict_row)
+
+        if model_id:
+            query = f"""
+                SELECT {_GOVERNANCE_COLUMNS}
+                FROM governance_decisions
+                WHERE model_id = %s
+                ORDER BY time DESC
+                LIMIT 1;
+            """
+            cursor.execute(query, (model_id,))
+        else:
+            query = f"""
+                SELECT {_GOVERNANCE_COLUMNS}
+                FROM governance_decisions
+                ORDER BY time DESC
+                LIMIT 1;
+            """
+            cursor.execute(query)
+
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not result:
+            if model_id:
+                return {"model_id": model_id, "data": None}
+            return {"status": "no_data"}
+
+        record = _parse_governance_jsonb(dict(result))
+        return record
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/governance/history")
+def get_governance_history(
+    model_id: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+    hours: int = Query(24, ge=1, le=720),
+):
+    """
+    Get historical governance decision records.
+
+    Args:
+        model_id: Filter by model (optional)
+        limit: Number of records to return (1-1000, default 100)
+        hours: Look back window in hours (1-720, default 24)
+
+    Returns:
+        List of governance decision records ordered by time DESC
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(row_factory=dict_row)
+
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+
+        if model_id:
+            query = f"""
+                SELECT {_GOVERNANCE_COLUMNS}
+                FROM governance_decisions
+                WHERE model_id = %s AND time >= %s
+                ORDER BY time DESC
+                LIMIT %s;
+            """
+            cursor.execute(query, (model_id, cutoff_time, limit))
+        else:
+            query = f"""
+                SELECT {_GOVERNANCE_COLUMNS}
+                FROM governance_decisions
+                WHERE time >= %s
+                ORDER BY time DESC
+                LIMIT %s;
+            """
+            cursor.execute(query, (cutoff_time, limit))
+
+        results = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        return [_parse_governance_jsonb(dict(row)) for row in results]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/governance/report/latest")
+def get_latest_governance_report(model_id: Optional[str] = Query(None)):
+    """
+    Get the full report_json for the latest governance decision for a model,
+    plus time and batch_id for context.
+    Returns 404 if no governance decisions exist for the given model_id.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(row_factory=dict_row)
+
+        if model_id:
+            query = """
+                SELECT time, batch_id, report_json
+                FROM governance_decisions
+                WHERE model_id = %s
+                ORDER BY time DESC
+                LIMIT 1;
+            """
+            cursor.execute(query, (model_id,))
+        else:
+            query = """
+                SELECT time, batch_id, report_json
+                FROM governance_decisions
+                ORDER BY time DESC
+                LIMIT 1;
+            """
+            cursor.execute(query)
+
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not result:
+            detail = f"No governance decisions found for model_id '{model_id}'" if model_id else "No governance decisions found"
+            raise HTTPException(status_code=404, detail=detail)
+
+        record = dict(result)
+        if isinstance(record.get("report_json"), str):
+            try:
+                record["report_json"] = json.loads(record["report_json"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        return record
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+uvicorn.run(app, host="0.0.0.0", port=8002)
