@@ -277,15 +277,15 @@ def build_engine_and_graph(
     # Create WDAG graph
     graph = WDAG()
     data_node = Node("Data_Stream", "Data Engineer")
-    intercept_node = Node("SDK_Intercept", "Middleware")
+    intercept_node = Node("Model", "Middleware")
     vitals_node = Node("Vitals_Engine", "Analysis")
     
     graph.add_node(data_node)
     graph.add_node(intercept_node)
     graph.add_node(vitals_node)
     
-    graph.add_edge("Data_Stream", "SDK_Intercept", weight=1.0)
-    graph.add_edge("SDK_Intercept", "Vitals_Engine", weight=1.0)
+    graph.add_edge("Data_Stream", "Model", weight=1.0)
+    graph.add_edge("Model", "Vitals_Engine", weight=1.0)
     
     # Create executor
     executor = WDAGExecutor(graph, engine)
@@ -761,11 +761,11 @@ def process_batch(
         
         logger.info(f"[INFO] Processing batch {batch_id} (Model: {model_id}, Items: {len(payload)})")
         
-        # 1. Load baseline and metadata from DB source of truth
+      
         baseline, metadata = load_model_config(db_conn, model_id)
         metadata = enrich_metadata_from_batch(metadata, batch)
 
-        # 1.5 SHAP smoke validation (one-time per model version)
+       
         validate_shap_runtime_config(model_id, metadata)
         
         # 2. Transform payload to DataFrame
@@ -799,11 +799,11 @@ def process_batch(
         }
         
         # Normalize the five vitals with fallbacks
-        fairness = metrics.get("statistical_parity", {}).get("value", 0.85)
-        stability = 1 - metrics.get("psi", {}).get("value", 0.08)
+        fairness = metrics.get("statistical_parity", {}).get("value", 0.85) if isinstance(metrics.get("statistical_parity"), dict) else 0.85
+        stability = 1 - (metrics.get("psi", {}).get("value", 0.08) if isinstance(metrics.get("psi"), dict) else 0.08)
         security = 0.68 if overall_status != "normal" else 0.95
-        privacy = metrics.get("privacy_score", {}).get("value", 0.90)
-        transparency = metrics.get("shap_importance", {}).get("value", 0.45)
+        privacy = metrics.get("privacy_score", {}).get("value", 0.90) if isinstance(metrics.get("privacy_score"), dict) else 0.90
+        transparency = metrics.get("shap_importance", {}).get("value", 0.45) if isinstance(metrics.get("shap_importance"), dict) else 0.45
         
         # Extract WDAG trace
         wdag_trace_dict = graph.to_dict()
