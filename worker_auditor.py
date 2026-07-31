@@ -49,6 +49,7 @@ from guardrail_ai.core.validator import Validator
 from guardrail_ai.wdag.node import Node
 from guardrail_ai.wdag.graph import WDAG
 from guardrail_ai.wdag.executor import WDAGExecutor
+from guardrail_ai.digital_judge import DigitalJudge, GovernanceReportBuilder
 
 # ============================================
 # LOGGING SETUP
@@ -639,6 +640,48 @@ def persist_heartbeat_log(
             records,
         )
 
+
+def persist_governance_decision(
+    cursor: psycopg.Cursor,
+    event_time: datetime,
+    model_id: str,
+    batch_id: str,
+    domain: str,
+    environment: str,
+    decision_dict: Dict[str, Any],
+    report_dict: Dict[str, Any],
+    wdag_trace_dict: Dict[str, Any],
+    metrics: Dict[str, Any],
+) -> None:
+    cursor.execute(
+        """
+        INSERT INTO governance_decisions
+            (time, model_id, domain, environment, batch_id,
+             diagnosis, severity, confidence, recommended_action, verdict,
+             governance_health, decision_json, report_json, wdag_status_json, metrics_json)
+        VALUES (%s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s);
+        """,
+        (
+            event_time,
+            model_id,
+            domain,
+            environment,
+            batch_id,
+            decision_dict.get("diagnosis"),
+            decision_dict.get("severity"),
+            decision_dict.get("confidence"),
+            decision_dict.get("recommended_action"),
+            decision_dict.get("verdict"),
+            report_dict.get("governance_health"),
+            json.dumps(decision_dict),
+            json.dumps(report_dict),
+            json.dumps(wdag_trace_dict),
+            json.dumps(metrics),
+        ),
+    )
+
 # ============================================
 # SHAP COMPUTATION
 # ============================================
@@ -810,6 +853,27 @@ def process_batch(
         wdag_trace_json = json.dumps(wdag_trace_dict)
         metrics_json = json.dumps(metrics)
 
+        # --- Digital Judge governance step (fail-safe) ---
+        try:
+            governance_input = {
+                "model_id": model_id,
+                "domain": metadata.get("domain", "standard"),
+                "environment": os.getenv("GUARDRAIL_ENV", "Production"),
+                "threshold_results": metrics,
+                "metrics": metrics,
+                "wdag_status": {"nodes": wdag_trace_dict},
+            }
+            judge = DigitalJudge()
+            decision_dict = judge.judge(governance_input)
+            report_builder = GovernanceReportBuilder()
+            report_dict = report_builder.build(decision_dict, governance_input)
+            logger.info(f"[OK] Digital Judge diagnosis={decision_dict.get('diagnosis')} severity={decision_dict.get('severity')} recommended_action={decision_dict.get('recommended_action')} for batch {batch_id}")
+            _gov_decision_ready = True
+        except Exception as e:
+            logger.error(f"[ERROR] Digital Judge governance step failed for batch {batch_id}: {e}", exc_info=True)
+            _gov_decision_ready = False
+        # --- End Digital Judge governance step ---
+
         event_time = datetime.now()
 
         # 6. Insert into TimescaleDB
@@ -842,6 +906,20 @@ def process_batch(
         persist_shap_summary(cursor, event_time, model_id, batch_id, metrics)
         persist_node_status_history(cursor, event_time, model_id, batch_id, wdag_trace_dict)
         persist_heartbeat_log(cursor, event_time, model_id, wdag_trace_dict)
+
+        # Persist governance decision if the Digital Judge step succeeded
+        if _gov_decision_ready:
+            try:
+                persist_governance_decision(
+                    cursor, event_time, model_id, batch_id,
+                    metadata.get("domain", "standard"),
+                    os.getenv("GUARDRAIL_ENV", "Production"),
+                    decision_dict, report_dict,
+                    wdag_trace_dict, metrics,
+                )
+                logger.info(f"[OK] Governance decision persisted for batch {batch_id} (model_id={model_id})")
+            except Exception as e:
+                logger.error(f"[ERROR] Digital Judge governance step failed for batch {batch_id}: {e}", exc_info=True)
 
         if STORE_RAW_EVENTS:
             cursor.execute(

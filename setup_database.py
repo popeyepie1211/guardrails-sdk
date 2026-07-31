@@ -191,6 +191,40 @@ def setup_database():
         """)
         logger.info("✅ Events hypertable created")
 
+        # Create governance_decisions table (Digital Judge output)
+        logger.info("⚖️ Creating governance_decisions table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS governance_decisions (
+                time TIMESTAMPTZ NOT NULL,
+                model_id TEXT NOT NULL,
+                domain TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                batch_id TEXT NOT NULL,
+                diagnosis TEXT,
+                severity TEXT,
+                confidence DOUBLE PRECISION,
+                recommended_action TEXT,
+                verdict TEXT,
+                governance_health TEXT,
+                decision_json JSONB NOT NULL,
+                report_json JSONB NOT NULL,
+                wdag_status_json JSONB NOT NULL,
+                metrics_json JSONB NOT NULL
+            );
+        """)
+        cursor.execute("""
+            SELECT create_hypertable('governance_decisions', 'time', if_not_exists => TRUE, migrate_data => TRUE);
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_governance_model_time
+            ON governance_decisions (model_id, time DESC);
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_governance_batch
+            ON governance_decisions (batch_id);
+        """)
+        logger.info("✅ governance_decisions table created")
+
         # Retention policies
         logger.info("🧹 Applying retention policies...")
         cursor.execute("""
@@ -205,6 +239,7 @@ def setup_database():
         cursor.execute("""
             SELECT add_retention_policy('heartbeat_log', INTERVAL '30 days', if_not_exists => TRUE);
         """)
+
         logger.info("✅ Retention policies applied")
         
         cursor.close()
@@ -219,6 +254,7 @@ def setup_database():
         logger.info("  - node_status_history (hypertable)")
         logger.info("  - heartbeat_log (hypertable)")
         logger.info("  - raw_inference_events (hypertable)")
+        logger.info("  - governance_decisions (hypertable)")
         logger.info("\nYou can now run:")
         logger.info("  - worker_auditor.py (pulls from Redis and writes to model_vitals)")
         logger.info("  - dbapi.py (serves vitals to dashboard)")
