@@ -6,7 +6,16 @@ Processes a training/historical dataset to compute mean and std for all vitals.
 Saves baseline and metadata for later use by the worker.
 
 Usage:
-    python baseline_initializer.py --model_id loan_risk_v1 --data data/train.csv --domain finance
+    python baseline_initializer.py \
+        --model_id loan_risk_v1 \
+        --data data/train.csv \
+        --domain finance \
+        --prediction_type binary \
+        --feature_columns income,credit_score \
+        --numerical_features income,credit_score \
+        --categorical_features gender \
+        --protected_columns gender,race \
+        --quasi_identifier_columns gender
 
 Outputs:
     baselines/loan_risk_v1.json           (baseline summary)
@@ -187,6 +196,7 @@ def build_metadata(
     feature_columns: list,
     prediction_column: str,
     domain: str,
+    prediction_type: str,
     numerical_features: list,
     categorical_features: list,
     protected_attributes: Dict[str, Any] = None,
@@ -199,14 +209,14 @@ def build_metadata(
         "domain": domain,
         "feature_columns": feature_columns,
         "prediction_column": prediction_column,
-        "prediction_type": "binary",
+        "prediction_type": prediction_type,
         "numerical_features": numerical_features,
         "categorical_features": categorical_features,
         "protected_attributes": protected_attributes,
         "quasi_identifier_columns": quasi_identifier_columns or categorical_features,
     }
     
-    logger.info(f"✅ Built metadata for domain={domain}, features={len(feature_columns)}")
+    logger.info(f"✅ Built metadata for domain={domain}, prediction_type={prediction_type}, features={len(feature_columns)}")
     return metadata
 
 # ============================================
@@ -329,9 +339,25 @@ def main():
         help="Comma-separated list of categorical feature names"
     )
     parser.add_argument(
+        "--prediction_type",
+        default="binary",
+        choices=["probability", "binary", "multiclass", "regression"],
+        help="Prediction type for this model (must match VitalsEngine's supported types)"
+    )
+    parser.add_argument(
+        "--protected_columns",
+        default=None,
+        help="Comma-separated list of protected attribute column names for fairness (e.g. 'sex,race'). Omit if fairness tracking is not needed for this model."
+    )
+    parser.add_argument(
         "--protected_column",
-        default="gender",
-        help="Name of protected attribute column (for fairness)"
+        default=None,
+        help="(DEPRECATED — use --protected_columns instead) Name of a single protected attribute column (for fairness)"
+    )
+    parser.add_argument(
+        "--quasi_identifier_columns",
+        default=None,
+        help="Comma-separated list of quasi-identifier columns for privacy scoring. Defaults to categorical_features if not provided."
     )
     parser.add_argument(
         "--output_dir",
@@ -393,21 +419,34 @@ def main():
     numerical_features = [c.strip() for c in args.numerical_features.split(",")]
     categorical_features = [c.strip() for c in args.categorical_features.split(",")]
     
-    # Build metadata
+    # Parse quasi-identifier columns (fall back to categorical_features inside build_metadata)
+    quasi_id_columns = [c.strip() for c in args.quasi_identifier_columns.split(",")] if args.quasi_identifier_columns else None
+    
+    # Parse protected columns — support new multi-column flag with deprecated single-column alias
+    if args.protected_columns:
+        protected_columns = [c.strip() for c in args.protected_columns.split(",")]
+    elif args.protected_column:
+        logger.warning("--protected_column is deprecated, use --protected_columns instead")
+        protected_columns = [args.protected_column.strip()]
+    else:
+        protected_columns = []
+    
     protected_attrs = {
         "type": "categorical",
-        "columns": [args.protected_column]
-    } if args.protected_column in df.columns else None
+        "columns": [c for c in protected_columns if c in df.columns]
+    } if protected_columns and any(c in df.columns for c in protected_columns) else None
     
+    # Build metadata
     metadata = build_metadata(
         df,
         feature_columns=feature_columns,
         prediction_column=args.prediction_column,
         domain=args.domain,
+        prediction_type=args.prediction_type,
         numerical_features=numerical_features,
         categorical_features=categorical_features,
         protected_attributes=protected_attrs,
-        quasi_identifier_columns=categorical_features
+        quasi_identifier_columns=quasi_id_columns
     )
     metadata["model_version"] = args.model_version
     if args.model_artifact_path:
