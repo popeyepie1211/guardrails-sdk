@@ -133,3 +133,66 @@ def test_overall_status_escalation(monkeypatch):
     result = engine.compute_batch(sample_dataframe())
 
     assert result["overall_status"] == "critical"
+    
+def test_linf_direction_is_upper():
+    engine = VitalsEngine(
+        baseline=baseline_without_fairness(),
+        metadata=metadata_without_fairness(),
+    )
+
+    assert engine.METRIC_DIRECTIONS["linf"] == "upper"
+    
+def test_ood_score_is_low_for_baseline_like_data():
+    baseline = baseline_without_fairness()
+    baseline["distributions"] = {
+        "numerical": {
+            "feature1": list(range(100)),
+            "feature2": list(range(100, 200)),
+        }
+    }
+
+    metadata = metadata_without_fairness()
+
+    df = pd.DataFrame({
+        "feature1": list(range(100)),
+        "feature2": list(range(100, 200)),
+        "prediction": [0.5] * 100,
+        "gender": ["M"] * 100,
+    })
+
+    engine = VitalsEngine(
+        baseline=baseline,
+        metadata=metadata,
+    )
+
+    metrics = engine._compute_metrics(df)
+
+    assert metrics["ood_score"] < 0.1
+
+
+def test_ood_score_increases_for_extreme_outliers():
+    baseline = baseline_without_fairness()
+    baseline["distributions"] = {
+        "numerical": {
+            "feature1": list(range(100)),
+            "feature2": list(range(100, 200)),
+        }
+    }
+
+    metadata = metadata_without_fairness()
+
+    df = pd.DataFrame({
+        "feature1": [1000] * 100,
+        "feature2": [2000] * 100,
+        "prediction": [0.5] * 100,
+        "gender": ["M"] * 100,
+    })
+
+    engine = VitalsEngine(
+        baseline=baseline,
+        metadata=metadata,
+    )
+
+    metrics = engine._compute_metrics(df)
+
+    assert metrics["ood_score"] > 0.9

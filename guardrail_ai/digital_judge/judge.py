@@ -135,20 +135,7 @@ class DigitalJudge:
                 ],
             ))
 
-        if critical_nodes >= 2:
-            candidates.append(DiagnosisResult(
-                diagnosis=Diagnosis.SYSTEM_INSTABILITY,
-                confidence=min(0.98, 0.75 + critical_nodes * 0.08),
-                evidence=[
-                    EvidenceItem(
-                        signal="wdag_status",
-                        status="critical",
-                        detail=f"{critical_nodes} WDAG nodes are critical, indicating system-level instability.",
-                        source="WDAG",
-                        strength=1.0,
-                    )
-                ],
-            ))
+            
 
         if psi >= 0.65 and ood >= 0.65:
             candidates.append(DiagnosisResult(
@@ -219,6 +206,23 @@ class DigitalJudge:
                 confidence=self._confidence([gini]),
                 evidence=[self._metric_evidence("gini", metric_status)],
             ))
+
+        if critical_nodes >= 2 and not candidates:
+            candidates.append(DiagnosisResult(
+                diagnosis=Diagnosis.SYSTEM_INSTABILITY,
+                confidence=min(0.98, 0.75 + critical_nodes * 0.08),
+                evidence=[
+                    EvidenceItem(
+                        signal="wdag_status",
+                        status="critical",
+                        detail=f"{critical_nodes} WDAG nodes are critical, indicating system-level instability.",
+                        source="WDAG",
+                        strength=1.0,
+                    )
+                ],
+            ))
+
+        
 
         if not candidates:
             evidence = []

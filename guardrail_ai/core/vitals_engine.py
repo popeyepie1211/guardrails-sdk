@@ -34,7 +34,7 @@ class VitalsEngine:
         "statistical_parity": "upper",
         "gini": "upper",
         "psi": "upper",
-        "linf": "lower",
+        "linf": "upper",
         "ood_score": "upper",
         "privacy_score": "upper",
         "shap_importance": "upper",
@@ -282,32 +282,38 @@ class VitalsEngine:
         )
 
         for col in self.metadata["numerical_features"]:
-            actual = df[col].values
+            actual = pd.to_numeric(df[col], errors="coerce").dropna().values
 
             expected = numerical_distributions.get(col)
+            if expected is not None:
+               expected = pd.to_numeric(pd.Series(expected), errors="coerce").dropna().values
             if expected is None:
                 baseline_mean = self.baseline["baseline_summary"]["psi"]["mean"]
                 expected = np.full(len(actual), baseline_mean)
 
-
+            if len(actual) == 0 or len(expected) == 0:
+                continue
             psi_col = PSI.compute_psi(expected, actual)
             psi_values.append(psi_col)
             
         metrics["psi"] = float(np.mean(psi_values)) if psi_values else 0.0
-        metrics["psi"] = min(metrics["psi"], 1.0)
+        
     # -----------------------------
     # Security: L∞
     # -----------------------------
         linf_values = []
 
         for col in self.metadata["numerical_features"]:
-            actual = df[col].values
+            actual = pd.to_numeric(df[col], errors="coerce").dropna().values
 
             expected = numerical_distributions.get(col)
+            if expected is not None:
+               expected = pd.to_numeric(pd.Series(expected), errors="coerce").dropna().values
             if expected is None:
                 baseline_mean = self.baseline["baseline_summary"]["linf"]["mean"]
                 expected = np.full(len(actual), baseline_mean)
-
+            if len(actual) == 0 or len(expected) == 0:
+                continue
             std = np.std(expected) + 1e-6
             linf = np.max(np.abs(actual - np.mean(expected))) / std
             linf_values.append(linf)
@@ -321,12 +327,18 @@ class VitalsEngine:
         ood_values = []
 
         for col in self.metadata["numerical_features"]:
-            actual = df[col].values
+            actual = pd.to_numeric(df[col], errors="coerce").dropna().values
 
             expected = numerical_distributions.get(col)
+            if expected is not None:
+                expected = pd.to_numeric(pd.Series(expected), errors="coerce").dropna().values
+
             if expected is None:
                 baseline_mean = self.baseline["baseline_summary"]["ood_score"]["mean"]
                 expected = np.full(len(actual), baseline_mean)
+
+            if len(actual) == 0 or len(expected) == 0:
+                continue
 
             mean = np.mean(expected)
             std = np.std(expected) + 1e-6

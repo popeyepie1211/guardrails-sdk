@@ -126,12 +126,19 @@ def compute_baseline(
             logger.warning(f"⚠️  Privacy score computation failed: {e}")
         
         # PSI (Population Stability Index)
+               # PSI (Population Stability Index)
+        # Compare each window against the full historical/reference distribution.
+        # Do not use a constant mean array because that creates degenerate bins
+        # and inflates baseline PSI.
         psi_values = []
         for col in numerical_features:
             try:
-                actual = window_df[col].values
-                baseline_mean = np.mean(actual)
-                expected = np.full(len(actual), baseline_mean)
+                expected = df[col].dropna().values
+                actual = window_df[col].dropna().values
+
+                if len(expected) == 0 or len(actual) == 0:
+                    continue
+
                 psi_val = PSI.compute_psi(expected, actual)
                 psi_values.append(psi_val)
             except Exception as e:
@@ -144,9 +151,12 @@ def compute_baseline(
         ood_values = []
         for col in numerical_features:
             try:
-                actual = window_df[col].values
-                baseline_mean = np.mean(actual)
-                expected = np.full(len(actual), baseline_mean)
+                expected = df[col].dropna().values
+                actual = window_df[col].dropna().values
+
+                if len(expected) == 0 or len(actual) == 0:
+                    continue
+
                 sec = Security.compute(expected, actual)
                 linf_values.append(sec.get("linf", 0))
                 ood_values.append(sec.get("ood_score", 0))
@@ -186,7 +196,19 @@ def compute_baseline(
             logger.warning(f"  {metric_name}: No valid values, using defaults")
             baseline_summary[metric_name] = {"mean": 0.5, "std": 0.1}
     
-    return {"baseline_summary": baseline_summary}
+    numerical_distributions = {}
+
+    for col in numerical_features:
+        if col in df.columns:
+            values = df[col].dropna().values
+            numerical_distributions[col] = values.tolist()
+
+    return {
+        "baseline_summary": baseline_summary,
+        "distributions": {
+            "numerical": numerical_distributions
+        }
+    }
 
 # ============================================
 # METADATA BUILDER

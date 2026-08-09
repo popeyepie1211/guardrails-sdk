@@ -115,7 +115,7 @@ def test_healthcare_stricter():
 # -----------------------------
 # Zero Std
 # -----------------------------
-def test_zero_std():
+def test_zero_std_flags_changed_value():
     result = ThresholdEvaluator.evaluate(
         metric_name="psi",
         value=0.06,
@@ -124,7 +124,21 @@ def test_zero_std():
         direction="upper",
         domain="standard",
     )
+    assert result["status"] == "critical"
+    assert result["warning"] == "zero_std_baseline"
+
+
+def test_zero_std_same_value_normal():
+    result = ThresholdEvaluator.evaluate(
+        metric_name="psi",
+        value=0.05,
+        mean=0.05,
+        std=0.0,
+        direction="upper",
+        domain="standard",
+    )
     assert result["status"] == "normal"
+    assert result["warning"] == "zero_std_baseline"
 
 
 # -----------------------------
@@ -155,3 +169,29 @@ def test_invalid_domain():
             direction="upper",
             domain="unknown",
         )
+def test_zero_std_upper_changed_value_is_critical():
+    result = ThresholdEvaluator.evaluate(
+        metric_name="shap_importance",
+        value=0.8,
+        mean=0.5,
+        std=0.0,
+        direction="upper",
+        domain="standard",
+    )
+
+    assert result["status"] == "critical"
+    assert result["warning"] == "zero_std_baseline"
+
+
+def test_zero_std_upper_same_value_is_normal():
+    result = ThresholdEvaluator.evaluate(
+        metric_name="shap_importance",
+        value=0.5,
+        mean=0.5,
+        std=0.0,
+        direction="upper",
+        domain="standard",
+    )
+
+    assert result["status"] == "normal"
+    assert result["warning"] == "zero_std_baseline"

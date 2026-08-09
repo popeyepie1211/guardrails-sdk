@@ -5,6 +5,10 @@ import numpy as np
 class StatisticalParity:
     """
     Computes Statistical Parity Difference.
+    Supports:
+    - single categorical protected attribute
+    - multiple categorical protected attributes
+    - one-hot protected attributes
     """
 
     @staticmethod
@@ -13,37 +17,23 @@ class StatisticalParity:
         prediction_column: str,
         protected_attributes: Dict[str, Any],
     ) -> float:
-        """
-        Computes maximum absolute statistical parity difference
-        across protected groups.
-
-        Returns:
-            float: statistical parity difference
-        """
-
         attr_type = protected_attributes["type"]
         columns = protected_attributes["columns"]
 
-        # -----------------------------
-        # Categorical Case
-        # -----------------------------
+        group_rates = {}
+
         if attr_type == "categorical":
+            for col in columns:
+                rates = (
+                    df.groupby(col)[prediction_column]
+                    .mean()
+                    .to_dict()
+                )
 
-            col = columns[0]
+                for group_name, rate in rates.items():
+                    group_rates[f"{col}={group_name}"] = rate
 
-            group_rates = (
-                df.groupby(col)[prediction_column]
-                .mean()
-                .to_dict()
-            )
-
-        # -----------------------------
-        # One-Hot Case
-        # -----------------------------
         elif attr_type == "one_hot":
-
-            group_rates = {}
-
             for col in columns:
                 mask = df[col] == 1
                 if mask.sum() == 0:
@@ -58,7 +48,6 @@ class StatisticalParity:
             return 0.0
 
         rates = list(group_rates.values())
-
         max_diff = 0.0
 
         for i in range(len(rates)):

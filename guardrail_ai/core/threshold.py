@@ -29,17 +29,29 @@ class ThresholdEvaluator:
         # -----------------------------
         # Edge Case: std = 0
         # -----------------------------
+                # -----------------------------
+        # Edge Case: std = 0
+        # -----------------------------
         if std == 0:
+            status = "normal"
+
+            if direction == "upper" and value > mean:
+                status = "critical"
+            elif direction == "lower" and value < mean:
+                status = "critical"
+            elif direction == "two-sided" and value != mean:
+                status = "critical"
+
             return {
                 "metric": metric_name,
                 "value": value,
                 "mean": mean,
                 "std": std,
-                "status": "normal",
+                "status": status,
                 "domain": domain,
                 "k": k,
+                "warning": "zero_std_baseline",
             }
-
         # -----------------------------
         # Thresholds
         # -----------------------------

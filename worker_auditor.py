@@ -38,6 +38,7 @@ import time
 import numpy as np
 import shap
 
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -49,6 +50,7 @@ from guardrail_ai.core.validator import Validator
 from guardrail_ai.wdag.node import Node
 from guardrail_ai.wdag.graph import WDAG
 from guardrail_ai.wdag.executor import WDAGExecutor
+from guardrail_ai.wdag.heartbeat import HeartbeatMonitor
 from guardrail_ai.digital_judge import DigitalJudge, GovernanceReportBuilder
 
 # ============================================
@@ -86,7 +88,7 @@ DEAD_LETTER_QUEUE = 'vitals_dead_letter'
 # Cache real model artifacts and SHAP explainers by model_id + version.
 model_bundle_cache: Dict[str, Dict[str, Any]] = {}
 shap_validation_cache: Dict[str, bool] = {}
-
+wdag_runtime_cache: Dict[str, Dict[str, Any]] = {}
 
 def to_snake_case(name: str) -> str:
     result = []
@@ -268,30 +270,49 @@ def build_engine_and_graph(
     metadata: Dict[str, Any]
 ) -> tuple:
     """
-    Build VitalsEngine and WDAG graph for a model.
-    Engine is intentionally created per batch because metadata contains
-    batch-scoped SHAP values and summaries.
-    """
-    # Create engine
-    engine = VitalsEngine(baseline=baseline, metadata=metadata)
-    
-    # Create WDAG graph
-    graph = WDAG()
-    data_node = Node("Data_Stream", "Data Engineer")
-    intercept_node = Node("Model", "Middleware")
-    vitals_node = Node("Vitals_Engine", "Analysis")
-    
-    graph.add_node(data_node)
-    graph.add_node(intercept_node)
-    graph.add_node(vitals_node)
-    
-    graph.add_edge("Data_Stream", "Model", weight=1.0)
-    graph.add_edge("Model", "Vitals_Engine", weight=1.0)
-    
-    # Create executor
-    executor = WDAGExecutor(graph, engine)
+    Build VitalsEngine and reuse WDAG graph/heartbeat state per model.
 
-    logger.debug(f"[OK] Built engine and graph for {model_id}")
+    VitalsEngine is created per batch because metadata can contain
+    batch-scoped SHAP values.
+
+    WDAG graph and heartbeat are cached per model_id so node status,
+    hysteresis, and heartbeat state can persist across batches.
+    """
+    engine = VitalsEngine(baseline=baseline, metadata=metadata)
+
+    runtime = wdag_runtime_cache.get(model_id)
+
+    if runtime is None:
+        graph = WDAG()
+
+        data_node = Node("Data_Stream", "Data Engineer")
+        intercept_node = Node("Model", "Middleware")
+        vitals_node = Node("Vitals_Engine", "Analysis")
+
+        graph.add_node(data_node)
+        graph.add_node(intercept_node)
+        graph.add_node(vitals_node)
+
+        graph.add_edge("Data_Stream", "Model", weight=1.0)
+        graph.add_edge("Model", "Vitals_Engine", weight=1.0)
+
+        heartbeat = HeartbeatMonitor(graph)
+
+        runtime = {
+            "graph": graph,
+            "heartbeat": heartbeat,
+        }
+        wdag_runtime_cache[model_id] = runtime
+
+        logger.info(f"[OK] Created persistent WDAG runtime for {model_id}")
+    else:
+        graph = runtime["graph"]
+        heartbeat = runtime["heartbeat"]
+        logger.debug(f"[OK] Reusing persistent WDAG runtime for {model_id}")
+
+    executor = WDAGExecutor(graph, engine)
+    executor.heartbeat = heartbeat
+
     return engine, graph, executor
 
 
@@ -427,6 +448,24 @@ def _get_model_bundle(model_id: str, metadata: Dict[str, Any], feature_cols: Lis
 
     model = _load_artifact(model_path)
     preprocessor = _load_artifact(preprocessor_path) if preprocessor_path else None
+
+    # Support full sklearn Pipeline artifacts saved as:
+    # preprocessing steps + final estimator.
+    # If no separate preprocessor is provided, split the Pipeline automatically.
+    if preprocessor is None and hasattr(model, "steps") and len(model.steps) >= 2:
+        try:
+            from sklearn.pipeline import Pipeline
+
+            if isinstance(model, Pipeline):
+                pipeline = model
+                preprocessor = Pipeline(pipeline.steps[:-1])
+                model = pipeline.steps[-1][1]
+                logger.info(
+                    f"[OK] Split sklearn Pipeline artifact for {model_id}: "
+                    f"preprocessor_steps={len(preprocessor.steps)}, estimator={type(model).__name__}"
+                )
+        except Exception as e:
+            logger.warning(f"[WARN] Could not split sklearn Pipeline artifact for {model_id}: {e}")
 
     background_df = _load_background_frame(feature_cols, metadata)
     background_array = background_df.values

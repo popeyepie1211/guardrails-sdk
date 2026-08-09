@@ -245,24 +245,18 @@ class Validator:
         # -----------------------------
             if attr_type == "categorical":
 
-                if len(columns) != 1:
-                   raise InputValidationError(
-                    "Categorical protected attribute must contain exactly one column."
-                )
+                for col in columns:
+                    unique_values = df[col].dropna().unique()
 
-                col = columns[0]
+                    if len(unique_values) < 2:
+                       raise InputValidationError(
+                        f"Protected attribute '{col}' must contain at least two groups."
+                    )
 
-                unique_values = df[col].dropna().unique()
-
-                if len(unique_values) < 2:
-                   raise InputValidationError(
-                    f"Protected attribute '{col}' must contain at least two groups."
-                )
-
-                if len(unique_values) > 20:
-                   raise InputValidationError(
-                    f"Protected attribute '{col}' has too many unique values."
-                )
+                    if len(unique_values) > 20:
+                       raise InputValidationError(
+                        f"Protected attribute '{col}' has too many unique values."
+                    )
 
         # -----------------------------
         # ONE-HOT
