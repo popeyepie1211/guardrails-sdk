@@ -30,13 +30,14 @@ import pickle
 import pandas as pd
 import psycopg
 from psycopg.rows import dict_row
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Callable
 import redis
 from redis import Redis
 import time
 import numpy as np
 import shap
+from sklearn.pipeline import Pipeline as SklearnPipeline
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -449,23 +450,32 @@ def _get_model_bundle(model_id: str, metadata: Dict[str, Any], feature_cols: Lis
     model = _load_artifact(model_path)
     preprocessor = _load_artifact(preprocessor_path) if preprocessor_path else None
 
-    # Support full sklearn Pipeline artifacts saved as:
-    # preprocessing steps + final estimator.
-    # If no separate preprocessor is provided, split the Pipeline automatically.
-    if preprocessor is None and hasattr(model, "steps") and len(model.steps) >= 2:
-        try:
-            from sklearn.pipeline import Pipeline
 
-            if isinstance(model, Pipeline):
-                pipeline = model
-                preprocessor = Pipeline(pipeline.steps[:-1])
-                model = pipeline.steps[-1][1]
-                logger.info(
-                    f"[OK] Split sklearn Pipeline artifact for {model_id}: "
-                    f"preprocessor_steps={len(preprocessor.steps)}, estimator={type(model).__name__}"
-                )
-        except Exception as e:
-            logger.warning(f"[WARN] Could not split sklearn Pipeline artifact for {model_id}: {e}")
+    # Auto-detect sklearn Pipeline and split into preprocessor + estimator
+    if isinstance(model, SklearnPipeline):
+        if preprocessor_path:
+            logger.warning(
+                f"[WARN] model_artifact_path for {model_id} is a sklearn Pipeline, "
+                f"but preprocessor_artifact_path is also set. "
+                f"Preferring the explicit preprocessor_artifact_path; "
+                f"using the last Pipeline step as the estimator."
+            )
+            # Use the last step as the estimator, keep the explicitly-loaded preprocessor
+            model = model.steps[-1][1]
+        else:
+            # Auto-split: all steps except last become the preprocessor,
+            # last step becomes the estimator. Both retain their fitted state
+            # because we're referencing the same already-fitted step objects.
+            if len(model.steps) > 1:
+                preprocessor = SklearnPipeline(model.steps[:-1])
+            # else: single-step pipeline, no preprocessor needed
+            model = model.steps[-1][1]
+            logger.info(
+                f"[OK] Detected combined sklearn Pipeline at model_artifact_path for {model_id}; "
+                f"auto-splitting into preprocessor ({len(preprocessor.steps) if preprocessor else 0} steps) "
+                f"+ estimator ({type(model).__name__}) for SHAP"
+            )
+
 
     background_df = _load_background_frame(feature_cols, metadata)
     background_array = background_df.values
@@ -680,6 +690,53 @@ def persist_heartbeat_log(
         )
 
 
+def load_node_state(
+    db_conn: psycopg.Connection,
+    model_id: str,
+) -> Dict[str, Any]:
+    """
+    Load the most recent node state for each node of a given model from
+    node_status_history. Used to seed WDAG node states at the start of
+    each batch, enabling cross-batch heartbeat timeout detection.
+
+    Returns a dict mapping node_name -> {"status": str, "last_seen": datetime}.
+    Returns empty dict if no prior history exists (first-ever batch for this model).
+    """
+    try:
+        with db_conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT ON (node_name)
+                    node_name,
+                    status,
+                    time AS last_seen
+                FROM node_status_history
+                WHERE model_id = %s
+                ORDER BY node_name, time DESC;
+                """,
+                (model_id,),
+            )
+            rows = cursor.fetchall()
+
+        if not rows:
+            logger.debug(f"[INFO] No prior node state for model {model_id} (first batch)")
+            return {}
+
+        state = {}
+        for row in rows:
+            state[row["node_name"]] = {
+                "status": row["status"],
+                "last_seen": row["last_seen"],
+            }
+
+        logger.info(f"[OK] Loaded prior node state for model {model_id}: {list(state.keys())}")
+        return state
+
+    except Exception as e:
+        logger.warning(f"[WARN] Failed to load node state for model {model_id}: {e}")
+        return {}
+
+
 def persist_governance_decision(
     cursor: psycopg.Cursor,
     event_time: datetime,
@@ -861,7 +918,30 @@ def process_batch(
         
         # 3. Build or fetch engine and graph
         engine, graph, executor = build_engine_and_graph(model_id, baseline, metadata_with_shap)
-        
+
+        # 3.5. SEED PRIOR NODE STATE (cross-batch heartbeat persistence)
+        prior_state = load_node_state(db_conn, model_id)
+        if prior_state:
+            for node_name, node_state in prior_state.items():
+                if node_name in graph.nodes:
+                    # Restore prior status
+                    graph.nodes[node_name].status = node_state["status"]
+                    # Restore last_seen timestamp for heartbeat monitor
+                    last_seen = node_state["last_seen"]
+                    if last_seen.tzinfo is None:
+                        last_seen = last_seen.replace(tzinfo=timezone.utc)
+                    executor.heartbeat.last_seen[node_name] = last_seen
+
+            # Check for timed-out nodes BEFORE processing the batch
+            timed_out_nodes = executor.heartbeat.check_timeouts()
+            if timed_out_nodes:
+                logger.warning(
+                    f"[HEARTBEAT] {len(timed_out_nodes)} node(s) timed out for model {model_id} "
+                    f"(>{executor.heartbeat.timeout}): {timed_out_nodes}"
+                )
+        else:
+            logger.debug(f"[INFO] No prior state to seed for model {model_id} (first batch)")
+
         # 4. Execute WDAG
         results = executor.run("Data_Stream", df)
         logger.info(f"[INFO] WDAG execution complete. Status: {results.get('status', 'unknown')}")
