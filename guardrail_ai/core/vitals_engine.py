@@ -169,6 +169,14 @@ class VitalsEngine:
             if metric_name == "statistical_parity" and not self.fairness_enabled:
                continue
 
+        # Graceful failure for missing valid baseline data
+            if value is None:
+                evaluated[metric_name] = {
+                "value": None,
+                "status": "no_baseline"
+            }
+                continue
+
         # SAFE baseline access
             if metric_name not in self.baseline["baseline_summary"]:
                 evaluated[metric_name] = {
@@ -287,16 +295,16 @@ class VitalsEngine:
             expected = numerical_distributions.get(col)
             if expected is not None:
                expected = pd.to_numeric(pd.Series(expected), errors="coerce").dropna().values
-            if expected is None:
-                baseline_mean = self.baseline["baseline_summary"]["psi"]["mean"]
-                expected = np.full(len(actual), baseline_mean)
+            
+            if expected is None or len(expected) == 0:
+                continue
 
-            if len(actual) == 0 or len(expected) == 0:
+            if len(actual) == 0:
                 continue
             psi_col = PSI.compute_psi(expected, actual)
             psi_values.append(psi_col)
             
-        metrics["psi"] = float(np.mean(psi_values)) if psi_values else 0.0
+        metrics["psi"] = float(np.mean(psi_values)) if psi_values else None
         
     # -----------------------------
     # Security: L∞
@@ -309,16 +317,17 @@ class VitalsEngine:
             expected = numerical_distributions.get(col)
             if expected is not None:
                expected = pd.to_numeric(pd.Series(expected), errors="coerce").dropna().values
-            if expected is None:
-                baseline_mean = self.baseline["baseline_summary"]["linf"]["mean"]
-                expected = np.full(len(actual), baseline_mean)
-            if len(actual) == 0 or len(expected) == 0:
+            
+            if expected is None or len(expected) == 0:
+                continue
+                
+            if len(actual) == 0:
                 continue
             std = np.std(expected) + 1e-6
             linf = np.max(np.abs(actual - np.mean(expected))) / std
             linf_values.append(linf)
 
-        metrics["linf"] = float(np.mean(linf_values)) if linf_values else 0.0
+        metrics["linf"] = float(np.mean(linf_values)) if linf_values else None
 
 
         # -----------------------------
@@ -333,11 +342,10 @@ class VitalsEngine:
             if expected is not None:
                 expected = pd.to_numeric(pd.Series(expected), errors="coerce").dropna().values
 
-            if expected is None:
-                baseline_mean = self.baseline["baseline_summary"]["ood_score"]["mean"]
-                expected = np.full(len(actual), baseline_mean)
+            if expected is None or len(expected) == 0:
+                continue
 
-            if len(actual) == 0 or len(expected) == 0:
+            if len(actual) == 0:
                 continue
 
             mean = np.mean(expected)
@@ -348,7 +356,7 @@ class VitalsEngine:
 
             ood_values.append(ood_ratio)
 
-        metrics["ood_score"] = float(np.mean(ood_values)) if ood_values else 0.0
+        metrics["ood_score"] = float(np.mean(ood_values)) if ood_values else None
 
     # -----------------------------
     # SHAP (Batch-based)
