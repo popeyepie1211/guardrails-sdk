@@ -29,7 +29,7 @@ import logging
 import pandas as pd
 import numpy as np
 import psycopg
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # Core Engine Imports
 from guardrail_ai.core.vitals_engine import VitalsEngine
@@ -274,8 +274,9 @@ def save_baseline_to_db(
     version: str,
     baseline: Dict[str, Any],
     metadata: Dict[str, Any],
+    api_key_hash: Optional[str] = None,
 ) -> None:
-    """Persist baseline + metadata into production tables."""
+    """Persist baseline, metadata, and an optional API-key hash atomically."""
     conn = psycopg.connect(
         user=DB_USER,
         password=DB_PASSWORD,
@@ -311,6 +312,21 @@ def save_baseline_to_db(
                 """,
                 (model_id, json.dumps(baseline), json.dumps(metadata), version),
             )
+
+            if api_key_hash is not None:
+                cursor.execute(
+                    """
+                    INSERT INTO model_api_keys (model_id, api_key_hash)
+                    VALUES (%s, %s)
+                    ON CONFLICT (model_id)
+                    DO NOTHING;
+                    """,
+                    (model_id, api_key_hash),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError(
+                        f"An API key already exists for model_id {model_id!r}."
+                    )
         conn.commit()
         logger.info("✅ Baseline and metadata upserted into PostgreSQL")
     finally:

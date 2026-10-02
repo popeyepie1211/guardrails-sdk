@@ -10,8 +10,11 @@ import logging
 import shutil
 import tempfile
 import pandas as pd
+from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Production baseline initializer — root-level module
@@ -39,6 +42,7 @@ from guardrail_ai.core.artifact_storage import (
     ArtifactSizeError,
     ArtifactPathError,
 )
+from guardrail_ai.core.api_keys import generate_api_key, hash_api_key
 
 logger = logging.getLogger("dbapi")
 
@@ -966,11 +970,13 @@ async def register_model(
         )
 
     # -----------------------------------------------------------------------
-    # 11. Persist to PostgreSQL (only for genuinely new models)
-    #     save_baseline_to_db() uses UPSERT internally; the duplicate guard
-    #     above ensures we only reach this point for new model_ids.
+    # 11. Generate an API key and persist only its hash. The registry row,
+    #     baseline, and API-key hash are committed in one database transaction.
     # -----------------------------------------------------------------------
+    raw_api_key: Optional[str] = None
     try:
+        raw_api_key = generate_api_key()
+        api_key_hash = hash_api_key(raw_api_key)
         save_baseline_to_db(
             model_id=model_id,
             model_name=model_name,
@@ -978,6 +984,7 @@ async def register_model(
             version=model_version,
             baseline=baseline,
             metadata=metadata,
+            api_key_hash=api_key_hash,
         )
     except Exception as e:
         _cleanup_artifacts(saved_paths)
@@ -994,6 +1001,7 @@ async def register_model(
 
     return {
         "model_id": model_id,
+        "api_key": raw_api_key,
         "status": "registered",
         "baseline_computed": True,
         "baseline_metrics": list(baseline_summary.keys()),

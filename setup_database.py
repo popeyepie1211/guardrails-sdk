@@ -99,6 +99,18 @@ def setup_database():
         """)
         logger.info("✅ models table created")
         
+        # Create per-model API-key hashes for ingestion authentication.
+        # Raw API keys are never stored.
+        logger.info("Creating model_api_keys table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS model_api_keys (
+                model_id TEXT PRIMARY KEY REFERENCES models(model_id) ON DELETE CASCADE,
+                api_key_hash TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+        logger.info("model_api_keys table created")
+
         # Create model_baselines table
         logger.info("📋 Creating model_baselines table...")
         cursor.execute("""
@@ -249,6 +261,7 @@ def setup_database():
         logger.info("\nTables created:")
         logger.info("  - model_vitals (hypertable)")
         logger.info("  - models")
+        logger.info("  - model_api_keys")
         logger.info("  - model_baselines")
         logger.info("  - shap_summary (hypertable)")
         logger.info("  - node_status_history (hypertable)")

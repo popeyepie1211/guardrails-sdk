@@ -9,6 +9,7 @@ INGESTION_URL = "http://localhost:3000/v1/ingest"
 TEST_MODEL_ID = f"test_endpoint_model_{uuid.uuid4().hex[:8]}"
 MODEL_FILE_PATH = "test_model_artifact.joblib"
 DATA_FILE_PATH = "test_historical_data.csv"
+REGISTERED_API_KEY = None
 
 def setup_files():
     # 1. Create a real sklearn model so it can be unpickled by the API server and worker
@@ -70,6 +71,7 @@ def run_test(name, fn):
         raise
 
 def test_1_registration():
+    global REGISTERED_API_KEY
     print(f"  Registering model_id: {TEST_MODEL_ID}")
     with open(MODEL_FILE_PATH, "rb") as mf, open(DATA_FILE_PATH, "rb") as df, open(DATA_FILE_PATH, "rb") as bf:
         files = {
@@ -93,6 +95,8 @@ def test_1_registration():
     assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
     j = resp.json()
     assert j["model_id"] == TEST_MODEL_ID
+    assert isinstance(j.get("api_key"), str) and j["api_key"].startswith("gr_")
+    REGISTERED_API_KEY = j["api_key"]
     assert j["baseline_computed"] is True
     assert "gini" in j["baseline_metrics"]
     assert j["numerical_distributions_populated"] is True
@@ -186,7 +190,11 @@ def test_5_end_to_end():
         ]
     }
     
-    resp = requests.post(INGESTION_URL, json=batch_payload)
+    resp = requests.post(
+        INGESTION_URL,
+        json=batch_payload,
+        headers={"X-API-KEY": REGISTERED_API_KEY},
+    )
     assert resp.status_code in (200, 201, 202), f"Ingestion failed: {resp.status_code} {resp.text}"
     print(f"  Ingestion queued. Wait 5s for worker auditor...")
     time.sleep(5)
@@ -212,6 +220,44 @@ def test_5_end_to_end():
         print("  [WARN] Governance decision not found yet (maybe worker still processing/WDAG node not finished).")
 
 
+def test_6_ingestion_rejects_invalid_keys_without_queueing():
+    import redis
+
+    redis_client = redis.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+    model_queue = f"vitals_queue:{TEST_MODEL_ID}"
+    rejected_batch_id = f"rejected_{uuid.uuid4().hex[:8]}"
+    base_payload = {
+        "modelId": TEST_MODEL_ID,
+        "batchId": rejected_batch_id,
+        "payload": [
+            {
+                "inputFeatures": {"income": 1},
+                "prediction": {"value": 1},
+            }
+        ],
+    }
+
+    wrong = requests.post(
+        INGESTION_URL,
+        json={**base_payload, "apiKey": "definitely-wrong"},
+    )
+    assert wrong.status_code == 401, f"Wrong key returned {wrong.status_code}: {wrong.text}"
+
+    missing = requests.post(INGESTION_URL, json=base_payload)
+    assert missing.status_code == 401, f"Missing key returned {missing.status_code}: {missing.text}"
+
+    unknown = requests.post(
+        INGESTION_URL,
+        json={**base_payload, "modelId": f"unknown_{uuid.uuid4().hex[:8]}"},
+        headers={"X-API-KEY": REGISTERED_API_KEY},
+    )
+    assert unknown.status_code == 401, f"Unknown model returned {unknown.status_code}: {unknown.text}"
+
+    queued_items = redis_client.lrange("vitals_queue", 0, -1)
+    queued_items += redis_client.lrange(model_queue, 0, -1)
+    assert all(rejected_batch_id not in item for item in queued_items)
+
+
 if __name__ == "__main__":
     setup_files()
     try:
@@ -220,6 +266,7 @@ if __name__ == "__main__":
         run_test("Test 3: Invalid Domain", test_3_invalid_domain)
         run_test("Test 4: Empty Quasi", test_4_empty_quasi)
         run_test("Test 5: E2E Pipeline", test_5_end_to_end)
+        run_test("Test 6: Invalid API Keys", test_6_ingestion_rejects_invalid_keys_without_queueing)
     finally:
         cleanup_files()
         print("\nAll done.")
