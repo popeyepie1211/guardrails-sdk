@@ -35,3 +35,4 @@ Thumbs.db
 baselines/
 cert_artifacts/
 data/
+model_artifacts/
