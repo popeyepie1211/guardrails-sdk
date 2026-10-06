@@ -6,7 +6,6 @@ import {
 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
-const MODEL_ID = import.meta.env.VITE_MODEL_ID || 'hf_distilbert_burst_demo';
 
 // ── Health → color mapping (reuses existing palette: red, orange, amber, yellow, emerald) ──
 const HEALTH_CONFIG = {
@@ -492,7 +491,7 @@ const ReportHistory = ({ modelId }) => {
 // MAIN GOVERNANCE PANEL
 // ══════════════════════════════════════════════
 
-export default function GovernancePanel() {
+export default function GovernancePanel({ modelId }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -503,7 +502,7 @@ export default function GovernancePanel() {
     setError(null);
     setIsEmpty(false);
 
-    fetch(`${API_BASE_URL}/api/governance/latest?model_id=${encodeURIComponent(MODEL_ID)}`)
+    fetch(`${API_BASE_URL}/api/governance/latest?model_id=${encodeURIComponent(modelId)}`)
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -521,7 +520,7 @@ export default function GovernancePanel() {
         setError(err.message);
         setLoading(false);
       });
-  }, []);
+  }, [modelId]);
 
   // ── Loading state ──
   if (loading) {
@@ -565,7 +564,7 @@ export default function GovernancePanel() {
           <Shield size={40} className="text-orange-500/30 mx-auto mb-4" />
           <h3 className="text-white font-bold text-lg mb-2">No Governance Data Available</h3>
           <p className="text-orange-200/50 text-sm">
-            No governance decisions have been recorded yet for model <span className="font-mono text-orange-300">{MODEL_ID}</span>.
+            No governance decisions have been recorded yet for model <span className="font-mono text-orange-300">{modelId}</span>.
           </p>
           <p className="text-orange-200/30 text-xs mt-2">
             Governance data will appear here once the Digital Judge has processed at least one batch for this model.
@@ -633,7 +632,7 @@ export default function GovernancePanel() {
 
       {/* History */}
       <Motion.div variants={itemVariants}>
-        <ReportHistory modelId={MODEL_ID} />
+        <ReportHistory modelId={modelId} />
       </Motion.div>
     </Motion.div>
   );

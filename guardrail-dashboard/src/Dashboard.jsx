@@ -13,7 +13,6 @@ import CyberBackground from './CyberBackground';
 import PurpleFeatureCard from './PurpleFeatureCard';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
-const MODEL_ID = import.meta.env.VITE_MODEL_ID || 'hf_distilbert_burst_demo';
 
 // --- NEW LOCAL COMPONENT: TypewriterEffect ---
 const TypewriterEffect = ({ text }) => {
@@ -101,7 +100,7 @@ const getIconForNode = (nodeName) => {
   return <Cpu size={18} />;
 };
 
-export default function ExecutiveDashboard() {
+export default function ExecutiveDashboard({ modelId }) {
   const [metrics, setMetrics] = useState(null);
   const [history, setHistory] = useState([]);
   
@@ -124,7 +123,7 @@ export default function ExecutiveDashboard() {
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/vitals/latest?model_id=${encodeURIComponent(MODEL_ID)}`);
+        const response = await fetch(`${API_BASE_URL}/api/vitals/latest?model_id=${encodeURIComponent(modelId)}`);
         if (!response.ok) throw new Error('Network response was not ok');
         
         const data = await response.json();
@@ -219,7 +218,7 @@ export default function ExecutiveDashboard() {
     fetchDashboardData();
     const interval = setInterval(fetchDashboardData, 3000);
     return () => clearInterval(interval);
-  }, []);
+  }, [modelId]);
 
   const fallback = {
     fairness: metrics?.fairness ?? 88,
