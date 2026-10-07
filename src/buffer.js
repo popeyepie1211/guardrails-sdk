@@ -1,20 +1,20 @@
 // src/buffer.js
+import { DEFAULT_BATCH_SIZE, DEFAULT_FLUSH_INTERVAL_MS, DEFAULT_MAX_QUEUE_LIMIT } from './constants.js';
 
 export class DataBuffer {
   /**
    * @param {Function} onFlush - The function (from Transport) to call when sending data
    */
-  constructor(onFlush) {
+  constructor(onFlush, options = {}) {
     this.queue = [];
     this.onFlush = onFlush;
-    
-    // CONFIGURATION (Adjust these for the 1-lakh user scale)
-    this.maxBatchSize = 50;      // Send after 50 predictions
-    this.flushInterval = 5000;   // Or every 5 seconds (whichever comes first)
-    this.maxQueueLimit = 5000;   // Safety: Drop data if we have 5k unsent items
-    
-    // Start the "Heartbeat" timer
+    this.pending = new Set();
+    this.maxBatchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
+    this.flushInterval = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
+    this.maxQueueLimit = options.maxQueueLimit ?? DEFAULT_MAX_QUEUE_LIMIT;
+
     this.timer = setInterval(() => this.flush(), this.flushInterval);
+    this.timer.unref?.();
   }
 
   /**
@@ -39,18 +39,21 @@ export class DataBuffer {
    * Clears the queue and sends it to the Transport layer
    */
   async flush() {
-    if (this.queue.length === 0) return;
+    if (this.queue.length === 0) return Promise.all(this.pending);
 
-    // 1. Snapshot the current queue and clear it immediately
     const batchToSend = [...this.queue];
-    this.queue = []; 
+    this.queue = [];
 
-    // 2. Hand off to the Transport layer (Non-blocking)
-    try {
-      await this.onFlush(batchToSend);
-    } catch (err) {
-      console.error("❌ [Guardrail SDK] Flush failed. Data lost for this batch.");
-      // Note: In a future version, we could re-insert this into the queue for retry
-    }
+    const delivery = Promise.resolve().then(() => this.onFlush(batchToSend))
+      .catch(err => console.error('❌ [Guardrail SDK] Flush failed. Data lost for this batch.', err))
+      .finally(() => this.pending.delete(delivery));
+    this.pending.add(delivery);
+    return delivery;
+  }
+
+  async shutdown() {
+    clearInterval(this.timer);
+    await this.flush();
+    await Promise.all(this.pending);
   }
 }

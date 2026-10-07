@@ -2,6 +2,25 @@
 import { deepClone, getTimestamp } from './utils/helpers.js';
 import { DataBuffer } from './buffer.js';
 import { Transport } from './transport.js'; 
+import {
+  DEFAULT_BATCH_SIZE, DEFAULT_FLUSH_INTERVAL_MS, DEFAULT_REQUEST_TIMEOUT_MS,
+  DEFAULT_MAX_QUEUE_LIMIT, DEFAULT_MAX_RETRIES
+} from './constants.js';
+
+const activeGuardrails = new Set();
+let exitHooksRegistered = false;
+
+function registerExitHooks() {
+  if (exitHooksRegistered || typeof process === 'undefined' || typeof process.on !== 'function') return;
+  exitHooksRegistered = true;
+  const shutdownAll = () => Promise.all([...activeGuardrails].map(instance => instance.shutdown()));
+  process.on('beforeExit', () => { void shutdownAll(); });
+  for (const [signal, exitCode] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+    process.on(signal, () => {
+      shutdownAll().finally(() => process.exit(exitCode));
+    });
+  }
+}
 
 const POSITIVE_LABELS = new Set(['approved', 'accept', 'accepted', 'yes', 'true', 'positive', 'allow']);
 const NEGATIVE_LABELS = new Set(['rejected', 'reject', 'denied', 'no', 'false', 'negative', 'block']);
@@ -86,7 +105,7 @@ function defaultPredictionAdapter(output) {
   };
 }
 
-class Guardrail {
+export class Guardrail {
   constructor() {
     this.buffer = null;    
     this.transport = null; 
@@ -100,6 +119,8 @@ class Guardrail {
     this.nodeName = 'SDK_Intercept';
     this.modelVersion = 'latest';
     this.extraMetadata = {};
+    this.onError = null;
+    this.shutdownPromise = null;
   }
 
  
@@ -114,10 +135,24 @@ class Guardrail {
     predictionType = 'binary',
     nodeName = 'SDK_Intercept',
     modelVersion = 'latest',
-    metadata = {}
+    metadata = {},
+    onError,
+    batchSize = DEFAULT_BATCH_SIZE,
+    flushIntervalMs = DEFAULT_FLUSH_INTERVAL_MS,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    maxQueueLimit = DEFAULT_MAX_QUEUE_LIMIT,
+    maxRetries = DEFAULT_MAX_RETRIES
   }) {
+    if (typeof apiKey !== 'string' || !apiKey.trim()) throw new Error('apiKey is required and must not be empty.');
+    if (typeof modelId !== 'string' || !modelId.trim()) throw new Error('modelId is required and must not be empty.');
+    if (predictionType && !['probability', 'binary', 'multiclass', 'regression'].includes(predictionType)) {
+      console.warn(`[Guardrail SDK] Unsupported predictionType: ${predictionType}`);
+    }
+    if (this.buffer) void this.buffer.shutdown();
+    this.shutdownPromise = null;
     this.apiKey = apiKey;
     this.modelId = modelId;
+    this.onError = typeof onError === 'function' ? onError : null;
     this.captureMethods = Array.isArray(captureMethods) && captureMethods.length > 0
       ? captureMethods
       : ['predict'];
@@ -130,20 +165,39 @@ class Guardrail {
     this.extraMetadata = metadata && typeof metadata === 'object' ? deepClone(metadata) : {};
 
   
-    this.transport = new Transport({
+    const transport = new Transport({
       apiKey,
       modelId,
       endpoint,
       domain: this.domain,
       predictionType: this.predictionType,
       nodeName: this.nodeName,
-      modelVersion: this.modelVersion
+      modelVersion: this.modelVersion,
+      requestTimeoutMs,
+      maxRetries,
+      onError: this.onError
     });
+    this.transport = transport;
 
-    
-    this.buffer = new DataBuffer((batch) => this.transport.sendBatch(batch));
+    this.buffer = new DataBuffer((batch) => transport.sendBatch(batch), {
+      batchSize, flushIntervalMs, maxQueueLimit
+    });
+    activeGuardrails.add(this);
+    registerExitHooks();
 
     console.log(`🛡️ [Guardrail] SDK Initialized for Model: ${modelId}`);
+  }
+
+  flush() {
+    return this.buffer?.flush();
+  }
+
+  shutdown() {
+    if (!this.buffer) return Promise.resolve();
+    if (!this.shutdownPromise) {
+      this.shutdownPromise = this.buffer.shutdown().finally(() => activeGuardrails.delete(this));
+    }
+    return this.shutdownPromise;
   }
 
   
@@ -199,8 +253,15 @@ class Guardrail {
                 output: deepClone(result)
               });
             } catch (sdkError) {
-           
-              console.warn("⚠️ [Guardrail SDK] Failed to capture vitals.", sdkError);
+              if (sdk.onError) {
+                try {
+                  sdk.onError(sdkError, { type: 'adapter', modelId: sdk.modelId });
+                } catch (callbackError) {
+                  console.error('[Guardrail SDK] onError callback failed:', callbackError);
+                }
+              } else {
+                console.warn("⚠️ [Guardrail SDK] Failed to capture vitals.", sdkError);
+              }
             }
 
             return result;
