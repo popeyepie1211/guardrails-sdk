@@ -18,6 +18,9 @@
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
+  "bin": {
+    "guardrail": "bin/guardrail.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.mjs",
@@ -28,7 +31,7 @@
     "start:ingestion": "node ingestion-server.js",
     "dev:ingestion": "nodemon ingestion-server.js",
     "test:mock": "node test/mock-model.js",
-    "test": "node --test test/sdk.test.js",
+    "test": "node --test test/sdk.test.js test/cli.test.js",
     "build": "esbuild src/index.js --bundle --format=esm --outfile=dist/index.mjs --sourcemap && esbuild src/index.js --bundle --platform=node --format=cjs --outfile=dist/index.cjs --sourcemap",
     "prepack": "npm run build",
     "prepublishOnly": "npm test"
@@ -56,6 +59,7 @@
   },
   "files": [
     "dist/",
+    "bin/",
     "README.md"
   ]
 }
